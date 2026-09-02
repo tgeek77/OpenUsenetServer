@@ -21,10 +21,12 @@ services:
         condition: service_healthy
     ports:
       - "119:119"
+      - "8080:8080"
     environment:
       OPENUSENET_HOSTNAME: ${OPENUSENET_HOSTNAME:-news.localhost}
       OPENUSENET_ORGANIZATION: ${OPENUSENET_ORGANIZATION:-OpenUsenetServer}
       OPENUSENET_LISTEN: ${OPENUSENET_LISTEN:-:119}
+      OPENUSENET_HTTP: ${OPENUSENET_HTTP:-:8080}
       OPENUSENET_POSTGRES: ${OPENUSENET_POSTGRES:-postgres://openusenet:openusenet@postgres:5432/openusenet?sslmode=disable}
       OPENUSENET_MBOX_DIR: ${OPENUSENET_MBOX_DIR:-/var/spool/openusenet/archive}
     volumes:

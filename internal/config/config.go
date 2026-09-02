@@ -31,6 +31,7 @@ type Server struct {
 
 type Listen struct {
 	NNTP string `yaml:"nntp"`
+	HTTP string `yaml:"http"` // admin portal; "-" disables
 }
 
 type Storage struct {
@@ -89,7 +90,7 @@ func Defaults() Config {
 			Hostname:     "news.localhost",
 			Organization: "OpenUsenetServer",
 		},
-		Listen: Listen{NNTP: ":119"},
+		Listen: Listen{NNTP: ":119", HTTP: ":8080"},
 		Storage: Storage{
 			Postgres: "postgres://openusenet:openusenet@127.0.0.1:5432/openusenet?sslmode=disable",
 			MBoxDir:  "./archive",
@@ -127,6 +128,9 @@ func Load(path string) (Config, error) {
 	}
 	if cfg.Listen.NNTP == "" {
 		cfg.Listen.NNTP = ":119"
+	}
+	if cfg.Listen.HTTP == "" {
+		cfg.Listen.HTTP = ":8080"
 	}
 	if cfg.Limits.MaxArtSize <= 0 {
 		cfg.Limits.MaxArtSize = 5_000_000
@@ -175,6 +179,9 @@ func applyEnv(cfg *Config) {
 	}
 	if v := os.Getenv("OPENUSENET_LISTEN"); v != "" {
 		cfg.Listen.NNTP = v
+	}
+	if v := os.Getenv("OPENUSENET_HTTP"); v != "" {
+		cfg.Listen.HTTP = v
 	}
 	if v := os.Getenv("OPENUSENET_POSTGRES"); v != "" {
 		cfg.Storage.Postgres = v

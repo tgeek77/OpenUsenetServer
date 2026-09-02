@@ -6,13 +6,13 @@ import (
 )
 
 type Group struct {
-	Name        string
-	Description string
-	Status      string // y, n, m
-	Low         int64
-	High        int64
-	Count       int64
-	CreatedAt   time.Time
+	Name        string    `json:"name"`
+	Description string    `json:"description"`
+	Status      string    `json:"status"` // y, n, m
+	Low         int64     `json:"low"`
+	High        int64     `json:"high"`
+	Count       int64     `json:"count"`
+	CreatedAt   time.Time `json:"created_at"`
 }
 
 type OverviewRow struct {
@@ -63,6 +63,9 @@ type Store interface {
 	NewNews(ctx context.Context, wildmat string, since time.Time) ([]string, error)
 	NewGroups(ctx context.Context, since time.Time) ([]Group, error)
 	HasMessageID(ctx context.Context, msgid string) (bool, error)
+	CountArticles(ctx context.Context) (int, error)
+	RecentArticles(ctx context.Context, limit int) ([]StoredArticle, error)
+	SearchGroups(ctx context.Context, query string, busyOnly bool, limit int) ([]Group, error)
 	Post(ctx context.Context, headers, body, msgid, subject, from, date, refs, xref string, bytes, lines int, groups []string) (*PostResult, error)
 	Next(ctx context.Context, group string, cur int64) (*StoredArticle, error)
 	Prev(ctx context.Context, group string, cur int64) (*StoredArticle, error)

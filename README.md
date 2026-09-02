@@ -6,7 +6,7 @@ You do **not** need `inn.conf`, `incoming.conf`, `newsfeeds`, or `ctlinnd`.
 
 ## Status
 
-Phase 1: RFC 3977 **reader** on port 119 (POST, OVER, groups, mbox archive) plus RFC 3977 **IHAVE** transfer to YAML `peers`. TLS, the admin wizard, INN peer-snippet import/export, streaming feeds, plugins, and Tor come later. See the design notes in-repo as they land.
+Phase 1: RFC 3977 **reader** on port 119 (POST, OVER, groups, mbox archive) plus RFC 3977 **IHAVE** transfer to YAML `peers`, and an unauthenticated **admin portal** on port 8080. TLS, AUTH, INN peer-snippet import/export, streaming feeds, plugins, and Tor come later.
 
 ## Quick start (Docker Compose)
 
@@ -15,6 +15,7 @@ cp .env.example .env
 # set OPENUSENET_HOSTNAME to your FQDN when you have one
 docker compose up --build -d
 printf 'CAPABILITIES\r\nQUIT\r\n' | nc -q 2 127.0.0.1 119
+# admin portal: http://127.0.0.1:8080/  (no authentication)
 ```
 
 Default seed group: `local.test`, plus the canonical ISC `active` / `newsgroups` files from https://ftp.isc.org/usenet/CONFIG/ (pulled on `openusenet migrate`).
@@ -52,7 +53,7 @@ openusenet migrate --config config.yml
 openusenet healthcheck --addr 127.0.0.1:119
 ```
 
-Environment variables override the config file: `OPENUSENET_HOSTNAME`, `OPENUSENET_ORGANIZATION`, `OPENUSENET_LISTEN`, `OPENUSENET_POSTGRES`, `OPENUSENET_MBOX_DIR`.
+Environment variables override the config file: `OPENUSENET_HOSTNAME`, `OPENUSENET_ORGANIZATION`, `OPENUSENET_LISTEN`, `OPENUSENET_HTTP`, `OPENUSENET_POSTGRES`, `OPENUSENET_MBOX_DIR`. The admin portal is unauthenticated; bind it to localhost or disable with `OPENUSENET_HTTP=-` if the host is reachable from untrusted networks.
 
 ## Protocol (this release)
 

@@ -17,6 +17,6 @@ RUN apt-get update \
     && chown -R news:news /var/lib/openusenet /var/spool/openusenet
 COPY --from=build /out/openusenet /usr/local/bin/openusenet
 USER news
-EXPOSE 119
+EXPOSE 119 8080
 ENTRYPOINT ["openusenet"]
 CMD ["serve"]

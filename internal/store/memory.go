@@ -76,6 +76,58 @@ func (m *Memory) CountGroups(_ context.Context) (int, error) {
 	return len(m.groups), nil
 }
 
+func (m *Memory) CountArticles(_ context.Context) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.arts), nil
+}
+
+func (m *Memory) RecentArticles(_ context.Context, limit int) ([]StoredArticle, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if limit <= 0 {
+		limit = 50
+	}
+	var out []StoredArticle
+	for _, a := range m.arts {
+		out = append(out, a.StoredArticle)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].StoredAt.After(out[j].StoredAt) })
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
+func (m *Memory) SearchGroups(_ context.Context, query string, busyOnly bool, limit int) ([]Group, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if limit <= 0 {
+		limit = 100
+	}
+	query = strings.ToLower(strings.TrimSpace(query))
+	var out []Group
+	for _, g := range m.groups {
+		if busyOnly && g.Count == 0 {
+			continue
+		}
+		if query != "" && !strings.Contains(strings.ToLower(g.Name), query) {
+			continue
+		}
+		out = append(out, g.Group)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Count != out[j].Count {
+			return out[i].Count > out[j].Count
+		}
+		return out[i].Name < out[j].Name
+	})
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
 func (m *Memory) ListGroups(_ context.Context, wildmat string) ([]Group, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

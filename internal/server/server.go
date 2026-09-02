@@ -5,8 +5,11 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"net/http"
+	"strings"
 	"time"
 
+	"github.com/openusenet/openusenet/internal/admin"
 	"github.com/openusenet/openusenet/internal/archive"
 	"github.com/openusenet/openusenet/internal/config"
 	"github.com/openusenet/openusenet/internal/feed"
@@ -19,6 +22,7 @@ type Server struct {
 	st     store.Store
 	mbox   *archive.MBox
 	ln     net.Listener
+	httpLn net.Listener
 	log    *log.Logger
 	feeder *feed.Feeder
 }
@@ -31,6 +35,9 @@ func New(cfg config.Config, st store.Store, mbox *archive.MBox, lg *log.Logger) 
 }
 
 func (s *Server) ListenAndServe(ctx context.Context) error {
+	if err := s.serveHTTP(ctx); err != nil {
+		return err
+	}
 	addr := config.NormalizeListen(s.cfg.Listen.NNTP)
 	lc := net.ListenConfig{}
 	ln, err := lc.Listen(ctx, "tcp", addr)
@@ -57,6 +64,34 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 			nntp.Serve(nc, s.st, s.mbox, s.cfg, s.log, s.feeder)
 		}(c)
 	}
+}
+
+func (s *Server) serveHTTP(ctx context.Context) error {
+	httpAddr := strings.TrimSpace(s.cfg.Listen.HTTP)
+	if httpAddr == "" || httpAddr == "-" {
+		return nil
+	}
+	httpAddr = config.NormalizeListen(httpAddr)
+	lc := net.ListenConfig{}
+	ln, err := lc.Listen(ctx, "tcp", httpAddr)
+	if err != nil {
+		return fmt.Errorf("listen http %s: %w", httpAddr, err)
+	}
+	s.httpLn = ln
+	hs := &http.Server{Handler: admin.New(s.cfg, s.st, s.feeder).Handler()}
+	s.log.Printf("admin http listening on %s (no authentication)", ln.Addr())
+	go func() {
+		<-ctx.Done()
+		c, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		_ = hs.Shutdown(c)
+	}()
+	go func() {
+		if err := hs.Serve(ln); err != nil && err != http.ErrServerClosed {
+			s.log.Printf("http: %v", err)
+		}
+	}()
+	return nil
 }
 
 func (s *Server) Addr() net.Addr {

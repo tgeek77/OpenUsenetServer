@@ -5,6 +5,7 @@ import (
 	"log"
 	"net"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/openusenet/openusenet/internal/article"
@@ -17,6 +18,10 @@ type Feeder struct {
 	cfg     config.Config
 	log     *log.Logger
 	timeout time.Duration
+	offered atomic.Int64
+	ok      atomic.Int64
+	fail    atomic.Int64
+	last    atomic.Value // string
 }
 
 func New(cfg config.Config, lg *log.Logger) *Feeder {
@@ -38,9 +43,14 @@ func (f *Feeder) Offer(msgid, path string, groups []string, wire []byte) {
 			continue
 		}
 		go func() {
+			f.offered.Add(1)
 			if err := f.ihave(p, msgid, wire); err != nil {
+				f.fail.Add(1)
 				f.log.Printf("feed %s: %v", p.Addr(), err)
+				return
 			}
+			f.ok.Add(1)
+			f.last.Store(msgid + " -> " + p.Addr())
 		}()
 	}
 	_ = groups
@@ -105,4 +115,22 @@ func (f *Feeder) ihave(p config.Peer, msgid string, wire []byte) error {
 	_ = nc.ReplyRaw("QUIT")
 	_, _, _ = nc.ReadReply()
 	return nil
+}
+
+type Stats struct {
+	Offered int64  `json:"offered"`
+	OK      int64  `json:"ok"`
+	Fail    int64  `json:"fail"`
+	Last    string `json:"last"`
+}
+
+func (f *Feeder) Stats() Stats {
+	if f == nil {
+		return Stats{}
+	}
+	s := Stats{Offered: f.offered.Load(), OK: f.ok.Load(), Fail: f.fail.Load()}
+	if v, ok := f.last.Load().(string); ok {
+		s.Last = v
+	}
+	return s
 }

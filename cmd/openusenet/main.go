@@ -73,6 +73,7 @@ func cmdServe(args []string) error {
 	pg := fs.String("postgres", "", "PostgreSQL URL")
 	mbox := fs.String("mbox-dir", "", "Directory for per-group mbox archives")
 	hostname := fs.String("hostname", "", "Server hostname / Path token")
+	httpAddr := fs.String("http", "", "Admin HTTP listen address (default :8080; - to disable)")
 	if err := parseHelp(fs, args, serveHelp); err != nil {
 		return err
 	}
@@ -88,6 +89,9 @@ func cmdServe(args []string) error {
 	}
 	if *mbox != "" {
 		cfg.Storage.MBoxDir = *mbox
+	}
+	if *httpAddr != "" {
+		cfg.Listen.HTTP = *httpAddr
 	}
 	if *hostname != "" {
 		cfg.Server.Hostname = *hostname
@@ -113,11 +117,12 @@ func cmdServe(args []string) error {
 const serveHelp = `Usage:
   openusenet serve [options]
 
-Run the NNTP reader (RFC 3977) on --listen. Creates schema if needed.
+Run the NNTP reader (RFC 3977) on --listen and the admin portal on --http.
 
 Options:
   --config FILE       YAML config (env vars override)
   --listen ADDR       NNTP bind address (default :119)
+  --http ADDR         Admin HTTP bind (default :8080; use - to disable)
   --postgres URL      PostgreSQL connection URL
   --mbox-dir DIR      Per-newsgroup mbox archive directory
   --hostname NAME     Path / Message-ID hostname

@@ -142,6 +142,71 @@ func (p *Postgres) CountGroups(ctx context.Context) (int, error) {
 	return n, err
 }
 
+func (p *Postgres) CountArticles(ctx context.Context) (int, error) {
+	var n int
+	err := p.pool.QueryRow(ctx, `SELECT COUNT(*) FROM articles`).Scan(&n)
+	return n, err
+}
+
+func (p *Postgres) RecentArticles(ctx context.Context, limit int) ([]StoredArticle, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	if limit > 200 {
+		limit = 200
+	}
+	rows, err := p.pool.Query(ctx, `
+		SELECT message_id, subject, from_hdr, date_hdr, references_hdr, bytes, lines, stored_at, xref
+		FROM articles ORDER BY stored_at DESC LIMIT $1`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []StoredArticle
+	for rows.Next() {
+		var a StoredArticle
+		if err := rows.Scan(&a.MessageID, &a.Subject, &a.From, &a.Date, &a.Refs, &a.Bytes, &a.Lines, &a.StoredAt, &a.Xref); err != nil {
+			return nil, err
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
+func (p *Postgres) SearchGroups(ctx context.Context, query string, busyOnly bool, limit int) ([]Group, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 500 {
+		limit = 500
+	}
+	q := `SELECT name, description, status, low, high, count, created_at FROM newsgroups WHERE 1=1`
+	args := []any{}
+	if busyOnly {
+		q += ` AND count > 0`
+	}
+	query = strings.TrimSpace(query)
+	if query != "" {
+		args = append(args, "%"+query+"%")
+		q += fmt.Sprintf(` AND name ILIKE $%d`, len(args))
+	}
+	q += ` ORDER BY count DESC, name LIMIT ` + fmt.Sprintf("%d", limit)
+	rows, err := p.pool.Query(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Group
+	for rows.Next() {
+		var g Group
+		if err := rows.Scan(&g.Name, &g.Description, &g.Status, &g.Low, &g.High, &g.Count, &g.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, g)
+	}
+	return out, rows.Err()
+}
+
 func (p *Postgres) ListGroups(ctx context.Context, wildmat string) ([]Group, error) {
 	rows, err := p.pool.Query(ctx, `SELECT name, description, status, low, high, count, created_at FROM newsgroups ORDER BY name`)
 	if err != nil {
