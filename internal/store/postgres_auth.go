@@ -116,7 +116,9 @@ func (p *Postgres) CountPeers(ctx context.Context) (int, error) {
 
 func (p *Postgres) ListPeers(ctx context.Context) ([]Peer, error) {
 	rows, err := p.pool.Query(ctx, `
-		SELECT id, host, port, enabled, notes, created_at FROM peers ORDER BY host, port`)
+		SELECT id, name, path_token, incoming_host, host, port, patterns, distributions, flags,
+		       enabled, notes, created_at
+		FROM peers ORDER BY host, port`)
 	if err != nil {
 		return nil, err
 	}
@@ -126,7 +128,9 @@ func (p *Postgres) ListPeers(ctx context.Context) ([]Peer, error) {
 
 func (p *Postgres) ListEnabledPeers(ctx context.Context) ([]Peer, error) {
 	rows, err := p.pool.Query(ctx, `
-		SELECT id, host, port, enabled, notes, created_at FROM peers WHERE enabled ORDER BY host, port`)
+		SELECT id, name, path_token, incoming_host, host, port, patterns, distributions, flags,
+		       enabled, notes, created_at
+		FROM peers WHERE enabled ORDER BY host, port`)
 	if err != nil {
 		return nil, err
 	}
@@ -138,7 +142,8 @@ func scanPeers(rows pgx.Rows) ([]Peer, error) {
 	var out []Peer
 	for rows.Next() {
 		var peer Peer
-		if err := rows.Scan(&peer.ID, &peer.Host, &peer.Port, &peer.Enabled, &peer.Notes, &peer.Created); err != nil {
+		if err := rows.Scan(&peer.ID, &peer.Name, &peer.PathToken, &peer.IncomingHost, &peer.Host, &peer.Port,
+			&peer.Patterns, &peer.Distributions, &peer.Flags, &peer.Enabled, &peer.Notes, &peer.Created); err != nil {
 			return nil, err
 		}
 		out = append(out, peer)
@@ -149,8 +154,11 @@ func scanPeers(rows pgx.Rows) ([]Peer, error) {
 func (p *Postgres) GetPeer(ctx context.Context, id int64) (*Peer, error) {
 	var peer Peer
 	err := p.pool.QueryRow(ctx, `
-		SELECT id, host, port, enabled, notes, created_at FROM peers WHERE id=$1`, id).
-		Scan(&peer.ID, &peer.Host, &peer.Port, &peer.Enabled, &peer.Notes, &peer.Created)
+		SELECT id, name, path_token, incoming_host, host, port, patterns, distributions, flags,
+		       enabled, notes, created_at
+		FROM peers WHERE id=$1`, id).
+		Scan(&peer.ID, &peer.Name, &peer.PathToken, &peer.IncomingHost, &peer.Host, &peer.Port,
+			&peer.Patterns, &peer.Distributions, &peer.Flags, &peer.Enabled, &peer.Notes, &peer.Created)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
@@ -161,18 +169,16 @@ func (p *Postgres) GetPeer(ctx context.Context, id int64) (*Peer, error) {
 }
 
 func (p *Postgres) CreatePeer(ctx context.Context, peer Peer) (*Peer, error) {
-	peer.Host = strings.TrimSpace(peer.Host)
+	peer = peer.Normalize()
 	if peer.Host == "" {
 		return nil, errors.New("host required")
 	}
-	if peer.Port <= 0 {
-		peer.Port = 119
-	}
 	err := p.pool.QueryRow(ctx, `
-		INSERT INTO peers (host, port, enabled, notes)
-		VALUES ($1, $2, $3, $4)
+		INSERT INTO peers (name, path_token, incoming_host, host, port, patterns, distributions, flags, enabled, notes)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
 		RETURNING id, created_at`,
-		peer.Host, peer.Port, peer.Enabled, peer.Notes).
+		peer.Name, peer.PathToken, peer.IncomingHost, peer.Host, peer.Port,
+		peer.Patterns, peer.Distributions, peer.Flags, peer.Enabled, peer.Notes).
 		Scan(&peer.ID, &peer.Created)
 	if err != nil {
 		return nil, err
@@ -180,33 +186,27 @@ func (p *Postgres) CreatePeer(ctx context.Context, peer Peer) (*Peer, error) {
 	return &peer, nil
 }
 
-func (p *Postgres) UpdatePeer(ctx context.Context, id int64, host string, port int, enabled *bool, notes *string) (*Peer, error) {
-	peer, err := p.GetPeer(ctx, id)
+func (p *Postgres) UpdatePeer(ctx context.Context, peer Peer) (*Peer, error) {
+	if peer.ID <= 0 {
+		return nil, errors.New("peer id required")
+	}
+	peer = peer.Normalize()
+	if peer.Host == "" {
+		return nil, errors.New("host required")
+	}
+	tag, err := p.pool.Exec(ctx, `
+		UPDATE peers SET name=$2, path_token=$3, incoming_host=$4, host=$5, port=$6,
+			patterns=$7, distributions=$8, flags=$9, enabled=$10, notes=$11
+		WHERE id=$1`,
+		peer.ID, peer.Name, peer.PathToken, peer.IncomingHost, peer.Host, peer.Port,
+		peer.Patterns, peer.Distributions, peer.Flags, peer.Enabled, peer.Notes)
 	if err != nil {
 		return nil, err
 	}
-	if peer == nil {
+	if tag.RowsAffected() == 0 {
 		return nil, ErrPeerNotFound
 	}
-	if host = strings.TrimSpace(host); host != "" {
-		peer.Host = host
-	}
-	if port > 0 {
-		peer.Port = port
-	}
-	if enabled != nil {
-		peer.Enabled = *enabled
-	}
-	if notes != nil {
-		peer.Notes = *notes
-	}
-	_, err = p.pool.Exec(ctx, `
-		UPDATE peers SET host=$2, port=$3, enabled=$4, notes=$5 WHERE id=$1`,
-		id, peer.Host, peer.Port, peer.Enabled, peer.Notes)
-	if err != nil {
-		return nil, err
-	}
-	return peer, nil
+	return &peer, nil
 }
 
 func (p *Postgres) DeletePeer(ctx context.Context, id int64) error {

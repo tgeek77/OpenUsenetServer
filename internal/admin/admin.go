@@ -17,6 +17,7 @@ import (
 	"github.com/openusenet/openusenet/internal/auth"
 	"github.com/openusenet/openusenet/internal/config"
 	"github.com/openusenet/openusenet/internal/feed"
+	"github.com/openusenet/openusenet/internal/inbound"
 	"github.com/openusenet/openusenet/internal/inn"
 	"github.com/openusenet/openusenet/internal/isc"
 	"github.com/openusenet/openusenet/internal/nntp"
@@ -63,6 +64,7 @@ func (p *Portal) Handler() http.Handler {
 	mux.HandleFunc("/api/users", p.withAuth(p.users, true))
 	mux.HandleFunc("/api/peers", p.withAuth(p.peers, true))
 	mux.HandleFunc("/api/peers/import-inn", p.withAuth(p.peersImportINN, true))
+	mux.HandleFunc("/api/peers/our-side", p.withAuth(p.peersOurSide, true))
 	mux.HandleFunc("/api/archive", p.withAuth(p.archiveAPI, true))
 	mux.HandleFunc("/api/archive/jobs", p.withAuth(p.archiveJobs, true))
 	mux.HandleFunc("/api/reader/", p.withAuth(p.reader, false))
@@ -239,22 +241,28 @@ func (p *Portal) status(w http.ResponseWriter, r *http.Request, _ store.User) {
 	na, _ := p.st.CountArticles(ctx)
 	peers, _ := p.st.ListPeers(ctx)
 	type peerStat struct {
-		ID    int64  `json:"id"`
-		Host  string `json:"host"`
-		Port  int    `json:"port"`
-		Up    bool   `json:"up"`
-		Error string `json:"error,omitempty"`
-		Notes string `json:"notes"`
-		Enabled bool `json:"enabled"`
+		ID            int64  `json:"id"`
+		Name          string `json:"name"`
+		Host          string `json:"host"`
+		IncomingHost  string `json:"incoming_host"`
+		Port          int    `json:"port"`
+		Up            bool   `json:"up"`
+		Error         string `json:"error,omitempty"`
+		Notes         string `json:"notes"`
+		Enabled       bool   `json:"enabled"`
 	}
 	ps := make([]peerStat, 0, len(peers))
 	for _, peer := range peers {
-		st := peerStat{ID: peer.ID, Host: peer.Host, Port: peer.Port, Notes: peer.Notes, Enabled: peer.Enabled}
+		st := peerStat{
+			ID: peer.ID, Name: peer.Name, Host: peer.Host, IncomingHost: peer.IncomingHost,
+			Port: peer.Port, Notes: peer.Notes, Enabled: peer.Enabled,
+		}
 		if peer.Enabled {
 			st.Up, st.Error = pingNNTP(peer.Addr(), 2*time.Second)
 		}
 		ps = append(ps, st)
 	}
+	peerHosts := store.PeerIHAVEHosts(peers)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"software":     nntp.Software,
 		"version":      nntp.Version,
@@ -274,8 +282,14 @@ func (p *Portal) status(w http.ResponseWriter, r *http.Request, _ store.User) {
 		"postgres":     redactURL(p.cfg.Storage.Postgres),
 		"mbox_dir":     p.cfg.Storage.MBoxDir,
 		"export_dir":   p.cfg.Archive.ExportDir,
-		"inbound_allow": p.cfg.Inbound.Allow,
+		"inbound": map[string]any{
+			"open":            inbound.Open(p.cfg, peerHosts),
+			"allow":           p.cfg.Inbound.Allow,
+			"effective_allow": inbound.EffectiveRules(p.cfg, peerHosts),
+			"peer_hosts":      peerHosts,
+		},
 		"archive_schedule": p.cfg.Archive.Schedule,
+		"our_side":         p.ourSideSnippets(inn.ExportOpts{}),
 	})
 }
 
@@ -478,6 +492,24 @@ func (p *Portal) users(w http.ResponseWriter, r *http.Request, me store.User) {
 func (p *Portal) peers(w http.ResponseWriter, r *http.Request, _ store.User) {
 	switch r.Method {
 	case http.MethodGet:
+		if idStr := strings.TrimSpace(r.URL.Query().Get("id")); idStr != "" {
+			id, err := strconv.ParseInt(idStr, 10, 64)
+			if err != nil {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "bad id"})
+				return
+			}
+			peer, err := p.st.GetPeer(r.Context(), id)
+			if err != nil {
+				writeErr(w, err)
+				return
+			}
+			if peer == nil {
+				writeJSON(w, http.StatusNotFound, map[string]string{"error": "not found"})
+				return
+			}
+			writeJSON(w, http.StatusOK, p.peerDetail(*peer))
+			return
+		}
 		ps, err := p.st.ListPeers(r.Context())
 		if err != nil {
 			writeErr(w, err)
@@ -485,46 +517,30 @@ func (p *Portal) peers(w http.ResponseWriter, r *http.Request, _ store.User) {
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"peers": ps})
 	case http.MethodPost:
-		var in struct {
-			Host    string `json:"host"`
-			Port    int    `json:"port"`
-			Enabled *bool  `json:"enabled"`
-			Notes   string `json:"notes"`
-		}
+		var in store.Peer
 		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
-		en := true
-		if in.Enabled != nil {
-			en = *in.Enabled
-		}
-		created, err := p.st.CreatePeer(r.Context(), store.Peer{
-			Host: in.Host, Port: in.Port, Enabled: en, Notes: in.Notes,
-		})
+		in.ID = 0
+		created, err := p.st.CreatePeer(r.Context(), in)
 		if err != nil {
 			writeErr(w, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"peer": created})
+		writeJSON(w, http.StatusOK, p.peerDetail(*created))
 	case http.MethodPatch:
-		var in struct {
-			ID      int64   `json:"id"`
-			Host    string  `json:"host"`
-			Port    int     `json:"port"`
-			Enabled *bool   `json:"enabled"`
-			Notes   *string `json:"notes"`
-		}
+		var in store.Peer
 		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
-		peer, err := p.st.UpdatePeer(r.Context(), in.ID, in.Host, in.Port, in.Enabled, in.Notes)
+		peer, err := p.st.UpdatePeer(r.Context(), in)
 		if err != nil {
 			writeErr(w, err)
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"peer": peer})
+		writeJSON(w, http.StatusOK, p.peerDetail(*peer))
 	case http.MethodDelete:
 		id, _ := strconv.ParseInt(r.URL.Query().Get("id"), 10, 64)
 		if err := p.st.DeletePeer(r.Context(), id); err != nil {
@@ -537,36 +553,143 @@ func (p *Portal) peers(w http.ResponseWriter, r *http.Request, _ store.User) {
 	}
 }
 
+func (p *Portal) peerDetail(peer store.Peer) map[string]any {
+	spec := peer.INNSpec()
+	return map[string]any{
+		"peer":     peer,
+		"snippets": inn.Snippets(spec),
+		"our_side": p.ourSideSnippets(inn.ExportOpts{}),
+	}
+}
+
+func (p *Portal) ourSideSnippets(opts inn.ExportOpts) map[string]string {
+	return inn.OurSide(p.cfg.Server.Hostname, p.cfg.Server.Pathhost, p.nntpPort(), opts)
+}
+
+func (p *Portal) peersOurSide(w http.ResponseWriter, r *http.Request, _ store.User) {
+	if r.Method != http.MethodGet && r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	opts := inn.ExportOpts{}
+	if r.Method == http.MethodPost {
+		if err := json.NewDecoder(r.Body).Decode(&opts); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+	} else {
+		q := r.URL.Query()
+		opts.Patterns = q.Get("patterns")
+		opts.Distributions = q.Get("distributions")
+		opts.Flags = q.Get("flags")
+		if portStr := q.Get("port"); portStr != "" {
+			opts.Port, _ = strconv.Atoi(portStr)
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"hostname": p.cfg.Server.Hostname,
+		"pathhost": p.cfg.Server.Pathhost,
+		"port":     p.nntpPort(),
+		"opts":     opts,
+		"our_side": p.ourSideSnippets(opts),
+	})
+}
+
+func (p *Portal) nntpPort() int {
+	addr := strings.TrimSpace(p.cfg.Listen.NNTP)
+	if addr == "" {
+		return 119
+	}
+	_, portStr, err := net.SplitHostPort(addr)
+	if err != nil {
+		if strings.HasPrefix(addr, ":") {
+			portStr = strings.TrimPrefix(addr, ":")
+		} else {
+			return 119
+		}
+	}
+	port, _ := strconv.Atoi(portStr)
+	if port <= 0 {
+		return 119
+	}
+	return port
+}
+
 func (p *Portal) peersImportINN(w http.ResponseWriter, r *http.Request, _ store.User) {
 	if r.Method != http.MethodPost {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
 	var in struct {
-		Text  string `json:"text"`
-		Apply bool   `json:"apply"`
+		Text     string `json:"text"`
+		FileType string `json:"file_type"`
+		PeerID   int64  `json:"peer_id"`
+		Apply    bool   `json:"apply"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
-	drafts := inn.Parse(in.Text)
-	if !in.Apply {
-		writeJSON(w, http.StatusOK, map[string]any{"preview": drafts})
+	fileType := strings.TrimSpace(in.FileType)
+	if fileType == "" {
+		fileType = "auto"
+	}
+	spec, warns := inn.ParseFile(in.Text, fileType)
+	if spec == nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "parse failed", "warnings": warns})
 		return
 	}
-	var created []store.Peer
-	for _, d := range drafts {
-		peer, err := p.st.CreatePeer(r.Context(), store.Peer{
-			Host: d.Host, Port: d.Port, Enabled: true, Notes: d.Notes,
+	preview := store.PeerFromINNSpec(*spec)
+	preview.Notes = strings.Join(warns, "; ")
+
+	if !in.Apply {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"preview":  preview,
+			"warnings": warns,
+			"snippets": inn.Snippets(*spec),
 		})
+		return
+	}
+
+	var saved *store.Peer
+	if in.PeerID > 0 {
+		cur, err := p.st.GetPeer(r.Context(), in.PeerID)
 		if err != nil {
-			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			writeErr(w, err)
 			return
 		}
-		created = append(created, *peer)
+		if cur == nil {
+			writeJSON(w, http.StatusNotFound, map[string]string{"error": "peer not found"})
+			return
+		}
+		merged := cur.INNSpec()
+		inn.MergeSpec(&merged, *spec)
+		up := store.PeerFromINNSpec(merged)
+		up.ID = cur.ID
+		up.Enabled = cur.Enabled
+		if cur.Notes != "" && preview.Notes == "" {
+			up.Notes = cur.Notes
+		} else if preview.Notes != "" {
+			up.Notes = strings.TrimSpace(cur.Notes + "; " + preview.Notes)
+		}
+		saved, err = p.st.UpdatePeer(r.Context(), up)
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+	} else {
+		created, err := p.st.CreatePeer(r.Context(), preview)
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		saved = created
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"created": created, "preview": drafts})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"peer":     saved,
+		"warnings": warns,
+		"snippets": inn.Snippets(saved.INNSpec()),
+	})
 }
 
 func (p *Portal) archiveAPI(w http.ResponseWriter, r *http.Request, _ store.User) {

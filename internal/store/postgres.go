@@ -69,8 +69,14 @@ CREATE TABLE IF NOT EXISTS users (
 
 CREATE TABLE IF NOT EXISTS peers (
     id BIGSERIAL PRIMARY KEY,
+    name TEXT NOT NULL DEFAULT '',
+    path_token TEXT NOT NULL DEFAULT '',
+    incoming_host TEXT NOT NULL DEFAULT '',
     host TEXT NOT NULL,
     port INT NOT NULL DEFAULT 119,
+    patterns TEXT NOT NULL DEFAULT '*',
+    distributions TEXT NOT NULL DEFAULT '',
+    flags TEXT NOT NULL DEFAULT 'Tm',
     enabled BOOLEAN NOT NULL DEFAULT true,
     notes TEXT NOT NULL DEFAULT '',
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -110,7 +116,30 @@ func OpenPostgres(ctx context.Context, url string) (*Postgres, error) {
 		pool.Close()
 		return nil, fmt.Errorf("postgres schema: %w", err)
 	}
+	if err := p.migratePeers(ctx); err != nil {
+		pool.Close()
+		return nil, err
+	}
 	return p, nil
+}
+
+func (p *Postgres) migratePeers(ctx context.Context) error {
+	alters := []string{
+		`ALTER TABLE peers ADD COLUMN IF NOT EXISTS name TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE peers ADD COLUMN IF NOT EXISTS path_token TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE peers ADD COLUMN IF NOT EXISTS incoming_host TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE peers ADD COLUMN IF NOT EXISTS patterns TEXT NOT NULL DEFAULT '*'`,
+		`ALTER TABLE peers ADD COLUMN IF NOT EXISTS distributions TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE peers ADD COLUMN IF NOT EXISTS flags TEXT NOT NULL DEFAULT 'Tm'`,
+		`UPDATE peers SET incoming_host = host WHERE incoming_host = '' OR incoming_host IS NULL`,
+		`UPDATE peers SET name = split_part(host, '.', 1) WHERE name = '' OR name IS NULL`,
+	}
+	for _, q := range alters {
+		if _, err := p.pool.Exec(ctx, q); err != nil {
+			return fmt.Errorf("peer migrate: %w", err)
+		}
+	}
+	return nil
 }
 
 func (p *Postgres) Close() error {

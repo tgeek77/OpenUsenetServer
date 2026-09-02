@@ -81,7 +81,7 @@ type Store interface {
 	ListEnabledPeers(ctx context.Context) ([]Peer, error)
 	GetPeer(ctx context.Context, id int64) (*Peer, error)
 	CreatePeer(ctx context.Context, p Peer) (*Peer, error)
-	UpdatePeer(ctx context.Context, id int64, host string, port int, enabled *bool, notes *string) (*Peer, error)
+	UpdatePeer(ctx context.Context, peer Peer) (*Peer, error)
 	DeletePeer(ctx context.Context, id int64) error
 	CountPeers(ctx context.Context) (int, error)
 

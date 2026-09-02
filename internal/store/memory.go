@@ -553,12 +553,9 @@ func (m *Memory) GetPeer(_ context.Context, id int64) (*Peer, error) {
 func (m *Memory) CreatePeer(_ context.Context, peer Peer) (*Peer, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	peer.Host = strings.TrimSpace(peer.Host)
+	peer = peer.Normalize()
 	if peer.Host == "" {
 		return nil, errors.New("host required")
-	}
-	if peer.Port <= 0 {
-		peer.Port = 119
 	}
 	m.nextPID++
 	peer.ID = m.nextPID
@@ -568,25 +565,18 @@ func (m *Memory) CreatePeer(_ context.Context, peer Peer) (*Peer, error) {
 	return &peer, nil
 }
 
-func (m *Memory) UpdatePeer(_ context.Context, id int64, host string, port int, enabled *bool, notes *string) (*Peer, error) {
+func (m *Memory) UpdatePeer(_ context.Context, peer Peer) (*Peer, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	p, ok := m.peers[id]
+	p, ok := m.peers[peer.ID]
 	if !ok {
 		return nil, ErrPeerNotFound
 	}
-	if host = strings.TrimSpace(host); host != "" {
-		p.Host = host
+	peer = peer.Normalize()
+	if peer.Host == "" {
+		return nil, errors.New("host required")
 	}
-	if port > 0 {
-		p.Port = port
-	}
-	if enabled != nil {
-		p.Enabled = *enabled
-	}
-	if notes != nil {
-		p.Notes = *notes
-	}
+	*p = peer
 	cp := *p
 	return &cp, nil
 }

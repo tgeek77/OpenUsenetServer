@@ -679,14 +679,18 @@ func cmdPost(s *Session, _ []string) error {
 }
 
 func cmdIHave(s *Session, args []string) error {
-	if !inbound.Allowed(s.cfg, s.conn.Remote()) {
+	ctx := context.Background()
+	var peerHosts []string
+	if peers, err := s.store.ListPeers(ctx); err == nil {
+		peerHosts = store.PeerIHAVEHosts(peers)
+	}
+	if !inbound.Allowed(s.cfg, s.conn.Remote(), peerHosts) {
 		return s.conn.Reply(ErrAccess, "IHAVE not permitted from your address")
 	}
 	msgid := args[1]
 	if !article.ValidMessageID(msgid) {
 		return s.conn.Reply(ErrSyntax, "syntax error")
 	}
-	ctx := context.Background()
 	dup, err := s.store.HasMessageID(ctx, msgid)
 	if err != nil {
 		return s.conn.Reply(FailIHaveDefer, "try again later")

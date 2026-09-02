@@ -32,12 +32,18 @@ func (u User) IsAdmin() bool { return u.Role == RoleAdmin }
 func (u User) MayPost() bool { return !u.Disabled && (u.CanPost || u.IsAdmin()) }
 
 type Peer struct {
-	ID      int64     `json:"id"`
-	Host    string    `json:"host"`
-	Port    int       `json:"port"`
-	Enabled bool      `json:"enabled"`
-	Notes   string    `json:"notes"`
-	Created time.Time `json:"created_at"`
+	ID             int64     `json:"id"`
+	Name           string    `json:"name"`
+	PathToken      string    `json:"path_token"`
+	IncomingHost   string    `json:"incoming_host"`
+	Host           string    `json:"host"`
+	Port           int       `json:"port"`
+	Patterns       string    `json:"patterns"`
+	Distributions  string    `json:"distributions"`
+	Flags          string    `json:"flags"`
+	Enabled        bool      `json:"enabled"`
+	Notes          string    `json:"notes"`
+	Created        time.Time `json:"created_at"`
 }
 
 func (p Peer) Addr() string {

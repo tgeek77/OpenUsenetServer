@@ -90,8 +90,12 @@ type GroupsSource struct {
 	FetchISC *bool  `yaml:"fetch_isc"`
 }
 
-// Inbound controls who may IHAVE to this server. Empty Allow = all remotes.
+// Inbound controls who may IHAVE to this server.
+// With open unset/true and no allow list or peers, all remotes may IHAVE (dev default).
+// With peers configured, enabled peer hostnames are always allowed (resolved to IP).
+// Set open: false to deny everyone not listed in allow or configured as a peer.
 type Inbound struct {
+	Open  *bool    `yaml:"open"`
 	Allow []string `yaml:"allow"` // hostnames and/or IP/CIDR
 }
 
@@ -273,6 +277,10 @@ func applyEnv(cfg *Config) {
 				cfg.Inbound.Allow = append(cfg.Inbound.Allow, p)
 			}
 		}
+	}
+	if v := os.Getenv("OPENUSENET_INBOUND_OPEN"); v != "" {
+		on := v == "1" || strings.EqualFold(v, "true") || strings.EqualFold(v, "yes")
+		cfg.Inbound.Open = &on
 	}
 }
 

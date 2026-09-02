@@ -64,6 +64,14 @@ section.panel h2 { margin: 0 0 0.6rem; font-size: 1rem; }
 #artbody { flex: 1; overflow: auto; white-space: pre-wrap; background: #10131a; border: 1px solid var(--line); padding: 0.75rem; margin: 0; font-family: ui-monospace, monospace; font-size: 0.82rem; }
 #compose { border-top: 1px solid var(--line); padding: 0.75rem; background: #161922; }
 .toolbar { padding: 0.45rem 0.75rem; border-bottom: 1px solid var(--line); display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; }
+.modal { position: fixed; inset: 0; background: rgba(0,0,0,0.55); display: flex; align-items: flex-start; justify-content: center; padding: 2rem 1rem; overflow: auto; z-index: 20; }
+.modalbox { width: min(920px, 100%); background: var(--panel); border: 1px solid var(--line); padding: 1rem 1.1rem 1.25rem; }
+.modalbox h2 { margin: 0 0 0.75rem; font-size: 1.05rem; }
+.modalbox h3 { margin: 1rem 0 0.5rem; font-size: 0.9rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem 0.75rem; }
+@media (max-width: 720px) { .grid2 { grid-template-columns: 1fr; } }
+.grid2 label { display: flex; flex-direction: column; gap: 0.2rem; font-size: 0.82rem; color: var(--muted); }
+.grid2 input, .grid2 select { width: 100%; }
 </style>
 </head>
 <body>
@@ -124,27 +132,86 @@ section.panel h2 { margin: 0 0 0.6rem; font-size: 1rem; }
   <div class="cards" id="cards"></div>
   <section class="panel">
     <h2>Peers</h2>
-    <p class="help">Outbound IHAVE destinations. Mutual peering means both servers add each other.</p>
-    <p class="help"><strong>How to add a peer:</strong> use the form, or paste INN newsfeeds / incoming.conf and preview before apply.</p>
+    <p class="help">Peering is bidirectional: you configure each remote on <strong>our</strong> server (below), and send them INN snippets for <strong>their</strong> server when they agree to carry your feed. See <a href="https://eternal-september.org/index.php?showpage=peering" target="_blank" rel="noopener">Eternal September peering</a> for the three-file model.</p>
+    <div id="inboundwarn" class="warn hidden"></div>
+    <details class="panel" style="margin-bottom:1rem;padding:0.75rem 1rem;border:1px solid var(--border);border-radius:6px">
+      <summary style="cursor:pointer;font-weight:600">Give to an INN peer (our side)</summary>
+      <p class="help">Send these three snippets to the remote admin. They paste them into <code>incoming.conf</code>, <code>innfeed.conf</code>, and <code>newsfeeds</code> on <em>their</em> INN box, then add you as a peer the same way you would any other site.</p>
+      <div class="grid2">
+        <label>Patterns <input id="expat" placeholder="*,@*.bina*,!local*"></label>
+        <label>Distributions <input id="exdist" placeholder="!local"></label>
+        <label>Flags <input id="exflags" placeholder="Ap,Tm"></label>
+        <label>NNTP port <input id="export" type="number" placeholder="119"></label>
+      </div>
+      <div class="row">
+        <label>File
+          <select id="exfile">
+            <option value="incoming">incoming.conf</option>
+            <option value="innfeed">innfeed.conf</option>
+            <option value="newsfeeds">newsfeeds</option>
+          </select>
+        </label>
+        <button class="secondary" id="excopy">Copy snippet</button>
+        <button class="secondary" id="excopyall">Copy all three</button>
+      </div>
+      <textarea id="exsnippet" rows="10" readonly></textarea>
+    </details>
     <div class="row">
-      <input id="phost" placeholder="hostname" size="22">
-      <select id="pport"><option value="119">119</option><option value="563">563</option></select>
-      <input id="pnotes" placeholder="notes" size="24">
-      <button id="padd">Add peer</button>
+      <button id="pnew">Add peer…</button>
+      <span class="mono" id="plistmsg"></span>
     </div>
-    <textarea id="pinn" placeholder="Paste INN newsfeeds or incoming.conf peer { hostname: ... }"></textarea>
-    <div class="row">
-      <button class="secondary" id="ppreview">Preview INN paste</button>
-      <button id="papply">Apply INN paste</button>
-      <span class="mono" id="pmsg"></span>
-    </div>
-    <pre id="pprev" class="hidden mono"></pre>
     <table>
-      <thead><tr><th>Status</th><th>Host</th><th>Port</th><th>Notes</th><th></th></tr></thead>
+      <thead><tr><th>Status</th><th>Name</th><th>Outgoing</th><th>Port</th><th>Incoming host</th><th></th></tr></thead>
       <tbody id="peers"></tbody>
     </table>
     <p class="mono" id="feed"></p>
   </section>
+  <div id="peermodal" class="modal hidden">
+    <div class="modalbox">
+      <h2 id="peertitle">Peer</h2>
+      <div class="grid2">
+        <label>Sitename <input id="pname" placeholder="eternal-september"></label>
+        <label><span>Enabled</span><span><input type="checkbox" id="penabled" checked> outbound IHAVE</span></label>
+        <label>Incoming host <input id="pincoming" placeholder="feeder.peer.example"></label>
+        <label>Outgoing host (innfeed ip-name) <input id="poutgoing" placeholder="feeder.peer.example"></label>
+        <label>Port <input id="pport" type="number" value="119"></label>
+        <label>Path token <input id="ppath" placeholder="peer.example.org"></label>
+        <label>Patterns <input id="ppatterns" placeholder="*,@*.bina*,!local*"></label>
+        <label>Distributions <input id="pdist" placeholder="!local"></label>
+        <label>Flags <input id="pflags" placeholder="Ap,Tm"></label>
+        <label>Notes <input id="pnotes"></label>
+      </div>
+      <h3>INN file</h3>
+      <div class="row">
+        <label>Configure on our server
+          <select id="pfile">
+            <option value="incoming">incoming.conf</option>
+            <option value="innfeed">innfeed.conf</option>
+            <option value="newsfeeds">newsfeeds</option>
+          </select>
+        </label>
+        <button class="secondary" id="pcopy">Copy snippet</button>
+        <button class="secondary" id="pimport">Apply paste below into fields</button>
+      </div>
+      <textarea id="psnippet" rows="10" placeholder="Paste incoming.conf, innfeed.conf, or newsfeeds snippet here…"></textarea>
+      <p class="mono" id="pmsg"></p>
+      <h3>Send to peer (our side)</h3>
+      <div class="row">
+        <select id="poursfile">
+          <option value="incoming">incoming.conf</option>
+          <option value="innfeed">innfeed.conf</option>
+          <option value="newsfeeds">newsfeeds</option>
+        </select>
+        <button class="secondary" id="pcopyours">Copy</button>
+      </div>
+      <textarea id="pours" rows="8" readonly></textarea>
+      <div class="row" style="margin-top:0.75rem">
+        <button id="psave">Save peer</button>
+        <button class="secondary" id="pcancel">Close</button>
+        <button class="secondary" id="pdelete">Delete</button>
+      </div>
+    </div>
+  </div>
   <section class="panel">
     <h2>Users</h2>
     <div class="row">
@@ -435,23 +502,209 @@ $("csend").onclick = async () => {
 async function loadAdmin() {
   await Promise.all([loadStatus(), loadGroups(), loadArts(), loadUsers(), loadJobs()]);
 }
+// Peers
+let peerEdit = null;
+let peerSnippets = {};
+let peerOurSide = {};
+let exportOurSide = {};
+
+function exportOptsFromForm() {
+  return {
+    patterns: $("expat").value || "*",
+    distributions: $("exdist").value,
+    flags: $("exflags").value || "Ap,Tm",
+    port: Number($("export").value) || 0,
+  };
+}
+
+async function refreshExportPanel() {
+  try {
+    const o = exportOptsFromForm();
+    const d = await j("/api/peers/our-side", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(o)});
+    exportOurSide = d.our_side || {};
+    const f = $("exfile").value;
+    $("exsnippet").value = exportOurSide[f] || "";
+  } catch (_) {}
+}
+
+function exportAllText() {
+  return ["incoming.conf", exportOurSide.incoming || "", "innfeed.conf", exportOurSide.innfeed || "", "newsfeeds", exportOurSide.newsfeeds || ""].join("\n\n");
+}
+
+function peerFieldsFromForm() {
+  return {
+    id: peerEdit ? peerEdit.id : 0,
+    name: $("pname").value,
+    incoming_host: $("pincoming").value,
+    host: $("poutgoing").value,
+    port: Number($("pport").value) || 119,
+    path_token: $("ppath").value,
+    patterns: $("ppatterns").value,
+    distributions: $("pdist").value,
+    flags: $("pflags").value,
+    enabled: $("penabled").checked,
+    notes: $("pnotes").value,
+  };
+}
+
+function fillPeerForm(p) {
+  $("pname").value = p.name || "";
+  $("pincoming").value = p.incoming_host || p.host || "";
+  $("poutgoing").value = p.host || "";
+  $("pport").value = p.port || 119;
+  $("ppath").value = p.path_token || "";
+  $("ppatterns").value = p.patterns || "*";
+  $("pdist").value = p.distributions || "";
+  $("pflags").value = p.flags || "Tm";
+  $("penabled").checked = p.enabled !== false;
+  $("pnotes").value = p.notes || "";
+}
+
+function localSnippetsFromFields() {
+  const p = peerFieldsFromForm();
+  const name = p.name || "peer";
+  const site = p.path_token ? name + "/" + p.path_token : name;
+  const dist = p.distributions ? "/" + p.distributions : "";
+  return {
+    incoming: `peer ${name} {\n    hostname:       ${p.incoming_host}\n}\n`,
+    innfeed: `peer ${name} {\n    ip-name:        ${p.host}\n    port-number:    ${p.port}\n}\n`,
+    newsfeeds: `${site}:${p.patterns}${dist}:${p.flags}:innfeed!\n`,
+  };
+}
+
+function refreshPeerSnippet() {
+  const f = $("pfile").value;
+  const local = localSnippetsFromFields();
+  $("psnippet").value = peerSnippets[f] || local[f] || "";
+  const of = $("poursfile").value;
+  $("pours").value = peerOurSide[of] || "";
+}
+
+async function openPeerModal(id) {
+  peerEdit = null;
+  peerSnippets = {};
+  peerOurSide = {};
+  $("pmsg").textContent = "";
+  const st = await j("/api/status");
+  peerOurSide = st.our_side || {};
+  if (id) {
+    $("peertitle").textContent = "Edit peer";
+    const d = await j("/api/peers?id=" + id);
+    peerEdit = d.peer;
+    peerSnippets = d.snippets || {};
+    if (d.our_side) peerOurSide = d.our_side;
+    fillPeerForm(d.peer);
+    $("pdelete").classList.remove("hidden");
+  } else {
+    $("peertitle").textContent = "New peer";
+    fillPeerForm({enabled:true, port:433, patterns:"*", flags:"Ap,Tm"});
+    $("pdelete").classList.add("hidden");
+  }
+  refreshPeerSnippet();
+  $("peermodal").classList.remove("hidden");
+}
+
+$("pnew").onclick = () => openPeerModal(null);
+["expat","exdist","exflags","export"].forEach(id => $(id).addEventListener("input", refreshExportPanel));
+$("exfile").onchange = () => { $("exsnippet").value = exportOurSide[$("exfile").value] || ""; };
+$("excopy").onclick = async () => { await navigator.clipboard.writeText($("exsnippet").value); };
+$("excopyall").onclick = async () => { await refreshExportPanel(); await navigator.clipboard.writeText(exportAllText()); };
+$("pcancel").onclick = () => { $("peermodal").classList.add("hidden"); peerEdit = null; };
+$("peermodal").onclick = (e) => { if (e.target.id === "peermodal") $("pcancel").click(); };
+$("pfile").onchange = refreshPeerSnippet;
+$("poursfile").onchange = refreshPeerSnippet;
+["pname","pincoming","poutgoing","pport","ppath","ppatterns","pdist","pflags"].forEach(id => {
+  $(id).addEventListener("input", refreshPeerSnippet);
+});
+$("pcopy").onclick = async () => {
+  await navigator.clipboard.writeText($("psnippet").value);
+  $("pmsg").textContent = "copied";
+};
+$("pcopyours").onclick = async () => {
+  await navigator.clipboard.writeText($("pours").value);
+  $("pmsg").textContent = "copied our side";
+};
+$("pimport").onclick = async () => {
+  $("pmsg").textContent = "importing…";
+  try {
+    const d = await j("/api/peers/import-inn", {method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({
+        text: $("psnippet").value,
+        file_type: $("pfile").value,
+        peer_id: peerEdit ? peerEdit.id : 0,
+        apply: false,
+      })});
+    if (d.preview) fillPeerForm(d.preview);
+    if (d.snippets) peerSnippets = d.snippets;
+    refreshPeerSnippet();
+    $("pmsg").textContent = (d.warnings && d.warnings.length) ? d.warnings.join("; ") : "fields updated from paste";
+  } catch (e) { $("pmsg").textContent = e.message; }
+};
+$("psave").onclick = async () => {
+  $("pmsg").textContent = "";
+  try {
+    const body = peerFieldsFromForm();
+    const d = await j("/api/peers", {
+      method: peerEdit ? "PATCH" : "POST",
+      headers: {"Content-Type":"application/json"},
+      body: JSON.stringify(body),
+    });
+    peerEdit = d.peer;
+    peerSnippets = d.snippets || {};
+    peerOurSide = d.our_side || peerOurSide;
+    refreshPeerSnippet();
+    const ih = (body.incoming_host || body.host || "").trim();
+    if (ih) {
+      $("pmsg").textContent = "saved — ensure " + ih + " can IHAVE to us (peer hostname is auto-allowed when enabled)";
+    } else {
+      $("pmsg").textContent = "saved";
+    }
+    $("pdelete").classList.remove("hidden");
+    await loadStatus();
+  } catch (e) { $("pmsg").textContent = e.message; }
+};
+$("pdelete").onclick = async () => {
+  if (!peerEdit || !confirm("Delete peer " + (peerEdit.name || peerEdit.host) + "?")) return;
+  await j("/api/peers?id="+peerEdit.id, {method:"DELETE"});
+  $("peermodal").classList.add("hidden");
+  await loadStatus();
+};
+
 async function loadStatus() {
   const s = await j("/api/status");
+  const ib = s.inbound || {};
+  const warn = $("inboundwarn");
+  if (ib.open) {
+    warn.textContent = "Inbound IHAVE is wide open — any host may push articles. Add peers and/or inbound.allow in config.yml before production.";
+    warn.classList.remove("hidden");
+  } else {
+    const rules = (ib.effective_allow || []).join(", ");
+    if (!rules) {
+      warn.textContent = "Inbound IHAVE rejects everyone — add peers or inbound.allow in config.yml.";
+      warn.classList.remove("hidden");
+    } else {
+      warn.classList.add("hidden");
+    }
+  }
+  exportOurSide = s.our_side || {};
+  if (!$("expat").value) { $("expat").value = "*"; $("exdist").value = "!local"; $("exflags").value = "Ap,Tm"; }
+  $("exsnippet").value = exportOurSide[$("exfile").value] || "";
   $("cards").innerHTML = [
     ["Groups", s.groups], ["Articles", s.articles], ["Peers", (s.peers||[]).length],
     ["Feed OK", s.feed && s.feed.ok], ["Feed fail", s.feed && s.feed.fail],
   ].map(([l,n]) => `<div class="card"><div class="n">${esc(n)}</div><div class="l">${esc(l)}</div></div>`).join("");
   $("peers").innerHTML = (s.peer_status||[]).map(p =>
     `<tr><td><span class="dot ${p.up?"up":"down"}"></span>${p.enabled?(p.up?"up":"down"):"off"}</td>
-     <td class="mono">${esc(p.host)}</td><td>${esc(p.port)}</td><td class="mono">${esc(p.notes||p.error||"")}</td>
-     <td><button class="secondary" data-del="${p.id}">Remove</button></td></tr>`
-  ).join("") || `<tr><td colspan="5">No peers</td></tr>`;
+     <td class="mono">${esc(p.name||"")}</td>
+     <td class="mono">${esc(p.host)}</td><td>${esc(p.port)}</td>
+     <td class="mono">${esc(p.incoming_host||p.host)}</td>
+     <td><button class="secondary" data-edit="${p.id}">Edit…</button></td></tr>`
+  ).join("") || `<tr><td colspan="6">No peers — add one to start peering</td></tr>`;
   $("feed").textContent = s.feed && s.feed.last ? ("last IHAVE " + s.feed.last) : "";
   $("peers").onclick = async (e) => {
-    const b = e.target.closest("button[data-del]");
+    const b = e.target.closest("button[data-edit]");
     if (!b) return;
-    await j("/api/peers?id="+b.dataset.del, {method:"DELETE"});
-    await loadStatus();
+    await openPeerModal(Number(b.dataset.edit));
   };
 }
 async function loadGroups() {
@@ -506,26 +759,6 @@ $("isc").onclick = async () => {
     await loadStatus(); await loadGroups();
   } catch (e) { $("gmsg").textContent = e.message; }
 };
-$("padd").onclick = async () => {
-  try {
-    await j("/api/peers", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({
-      host: $("phost").value, port: Number($("pport").value), notes: $("pnotes").value, enabled: true
-    })});
-    $("pmsg").textContent = "added";
-    await loadStatus();
-  } catch (e) { $("pmsg").textContent = e.message; }
-};
-async function innPaste(apply) {
-  try {
-    const d = await j("/api/peers/import-inn", {method:"POST", headers:{"Content-Type":"application/json"},
-      body: JSON.stringify({text: $("pinn").value, apply})});
-    $("pprev").classList.remove("hidden");
-    $("pprev").textContent = JSON.stringify(d.preview || d, null, 2);
-    if (apply) await loadStatus();
-  } catch (e) { $("pmsg").textContent = e.message; }
-}
-$("ppreview").onclick = () => innPaste(false);
-$("papply").onclick = () => innPaste(true);
 $("uadd").onclick = async () => {
   try {
     await j("/api/users", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({
