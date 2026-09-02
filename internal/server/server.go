@@ -18,6 +18,7 @@ import (
 	"github.com/openusenet/openusenet/internal/feed"
 	"github.com/openusenet/openusenet/internal/inpaths"
 	"github.com/openusenet/openusenet/internal/nntp"
+	"github.com/openusenet/openusenet/internal/peerauth"
 	"github.com/openusenet/openusenet/internal/store"
 )
 
@@ -50,6 +51,9 @@ func New(cfg config.Config, st store.Store, mbox *archive.MBox, lg *log.Logger) 
 
 func (s *Server) ListenAndServe(ctx context.Context) error {
 	if err := SeedPeers(ctx, s.st, s.cfg); err != nil {
+		return err
+	}
+	if err := peerauth.EnsurePasswords(ctx, s.st, s.cfg.Server.Pathhost); err != nil {
 		return err
 	}
 	if err := BootstrapAdmin(ctx, s.st, s.log); err != nil {
@@ -295,7 +299,9 @@ func SeedPeers(ctx context.Context, st store.Store, cfg config.Config) error {
 		return nil
 	}
 	for _, p := range cfg.Peers {
-		if _, err := st.CreatePeer(ctx, store.Peer{Host: p.Host, Port: p.Port, Enabled: true, Notes: "seeded from YAML"}); err != nil {
+		peer := store.Peer{Host: p.Host, Port: p.Port, Enabled: true, Notes: "seeded from YAML"}
+		peerauth.PreparePeer(cfg.Server.Pathhost, &peer)
+		if _, err := st.CreatePeer(ctx, peer); err != nil {
 			return err
 		}
 	}

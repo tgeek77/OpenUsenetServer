@@ -31,6 +31,11 @@ services:
       OPENUSENET_MBOX_DIR: ${OPENUSENET_MBOX_DIR:-/var/spool/openusenet/archive}
       OPENUSENET_EXPORT_DIR: ${OPENUSENET_EXPORT_DIR:-/var/spool/openusenet/exports}
       OPENUSENET_BOOTSTRAP_ADMIN: ${OPENUSENET_BOOTSTRAP_ADMIN:-}
+      OPENUSENET_CLEANFEED: ${OPENUSENET_CLEANFEED:-true}
+      OPENUSENET_CLEANFEED_MODE: ${OPENUSENET_CLEANFEED_MODE:-reject}
+      OPENUSENET_CLEANFEED_COMMAND: ${OPENUSENET_CLEANFEED_COMMAND:-perl /usr/local/lib/openusenet/cleanfeed-filter.pl}
+      OPENUSENET_CLEANFEED_SCRIPT: ${OPENUSENET_CLEANFEED_SCRIPT:-/usr/local/lib/cleanfeed-ng/cleanfeed}
+      OPENUSENET_CLEANFEED_CONFIG_DIR: ${OPENUSENET_CLEANFEED_CONFIG_DIR:-/usr/local/lib/cleanfeed-ng/etc}
     volumes:
       - archive:/var/spool/openusenet/archive
       - exports:/var/spool/openusenet/exports

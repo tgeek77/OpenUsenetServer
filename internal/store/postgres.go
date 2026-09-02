@@ -133,6 +133,8 @@ func (p *Postgres) migratePeers(ctx context.Context) error {
 		`ALTER TABLE peers ADD COLUMN IF NOT EXISTS flags TEXT NOT NULL DEFAULT 'Tm'`,
 		`UPDATE peers SET incoming_host = host WHERE incoming_host = '' OR incoming_host IS NULL`,
 		`UPDATE peers SET name = split_part(host, '.', 1) WHERE name = '' OR name IS NULL`,
+		`ALTER TABLE peers ADD COLUMN IF NOT EXISTS incoming_password TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE peers ADD COLUMN IF NOT EXISTS outgoing_password TEXT NOT NULL DEFAULT ''`,
 	}
 	for _, q := range alters {
 		if _, err := p.pool.Exec(ctx, q); err != nil {

@@ -161,7 +161,7 @@ section.panel h2 { margin: 0 0 0.6rem; font-size: 1rem; }
       <span class="mono" id="plistmsg"></span>
     </div>
     <table>
-      <thead><tr><th>Status</th><th>Name</th><th>Outgoing</th><th>Port</th><th>Incoming host</th><th></th></tr></thead>
+      <thead><tr><th>Status</th><th>Name</th><th>Outgoing</th><th>Port</th><th>Incoming host</th><th>Auth</th><th></th></tr></thead>
       <tbody id="peers"></tbody>
     </table>
     <p class="mono" id="feed"></p>
@@ -192,6 +192,8 @@ section.panel h2 { margin: 0 0 0.6rem; font-size: 1rem; }
         <label>Patterns <input id="ppatterns" placeholder="*,@*.bina*,!local*"></label>
         <label>Distributions <input id="pdist" placeholder="!local"></label>
         <label>Flags <input id="pflags" placeholder="Ap,Tm"></label>
+        <label>Incoming password (they AUTHINFO to us) <input id="pinpass" type="password" autocomplete="new-password" placeholder="auto from pathhosts"></label>
+        <label>Outgoing password (we AUTHINFO to them) <input id="poutpass" type="password" autocomplete="new-password" placeholder="auto from pathhosts"></label>
         <label>Notes <input id="pnotes"></label>
       </div>
       <h3>INN file</h3>
@@ -555,6 +557,8 @@ function peerFieldsFromForm() {
     patterns: $("ppatterns").value,
     distributions: $("pdist").value,
     flags: $("pflags").value,
+    incoming_password: $("pinpass").value,
+    outgoing_password: $("poutpass").value,
     enabled: $("penabled").checked,
     notes: $("pnotes").value,
   };
@@ -569,6 +573,8 @@ function fillPeerForm(p) {
   $("ppatterns").value = p.patterns || "*";
   $("pdist").value = p.distributions || "";
   $("pflags").value = p.flags || "Tm";
+  $("pinpass").value = p.incoming_password || "";
+  $("poutpass").value = p.outgoing_password || "";
   $("penabled").checked = p.enabled !== false;
   $("pnotes").value = p.notes || "";
 }
@@ -578,8 +584,9 @@ function localSnippetsFromFields() {
   const name = p.name || "peer";
   const site = p.path_token ? name + "/" + p.path_token : name;
   const dist = p.distributions ? "/" + p.distributions : "";
+  const inpass = p.incoming_password ? `\n    password:       ${p.incoming_password}` : "";
   return {
-    incoming: `peer ${name} {\n    hostname:       ${p.incoming_host}\n}\n`,
+    incoming: `peer ${name} {\n    hostname:       ${p.incoming_host}${inpass}\n}\n`,
     innfeed: `peer ${name} {\n    ip-name:        ${p.host}\n    port-number:    ${p.port}\n}\n`,
     newsfeeds: `${site}:${p.patterns}${dist}:${p.flags}:innfeed!\n`,
   };
@@ -687,7 +694,10 @@ async function loadStatus() {
   const s = await j("/api/status");
   const ib = s.inbound || {};
   const warn = $("inboundwarn");
-  if (ib.open) {
+  if (ib.require_peer_auth) {
+    warn.textContent = "Inbound IHAVE requires configured peers to AUTHINFO (INN incoming.conf password model).";
+    warn.classList.remove("hidden");
+  } else if (ib.open) {
     warn.textContent = "Inbound IHAVE is wide open — any host may push articles. Add peers and/or inbound.allow in config.yml before production.";
     warn.classList.remove("hidden");
   } else {
@@ -711,8 +721,9 @@ async function loadStatus() {
      <td class="mono">${esc(p.name||"")}</td>
      <td class="mono">${esc(p.host)}</td><td>${esc(p.port)}</td>
      <td class="mono">${esc(p.incoming_host||p.host)}</td>
+     <td>${p.has_incoming_password ? "auth" : "—"}</td>
      <td><button class="secondary" data-edit="${p.id}">Edit…</button></td></tr>`
-  ).join("") || `<tr><td colspan="6">No peers — add one to start peering</td></tr>`;
+  ).join("") || `<tr><td colspan="7">No peers — add one to start peering</td></tr>`;
   $("feed").textContent = s.feed && s.feed.last ? ("last IHAVE " + s.feed.last) : "";
   $("peers").onclick = async (e) => {
     const b = e.target.closest("button[data-edit]");

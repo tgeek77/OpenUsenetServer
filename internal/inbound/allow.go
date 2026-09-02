@@ -74,6 +74,15 @@ func Allowed(cfg config.Config, remoteAddr string, peerHosts []string) bool {
 	return false
 }
 
+// MatchHost reports whether remoteAddr matches rule (hostname, IP, or CIDR).
+func MatchHost(remoteAddr, rule string) bool {
+	host := remoteAddr
+	if h, _, err := net.SplitHostPort(remoteAddr); err == nil {
+		host = h
+	}
+	return matchRule(host, net.ParseIP(host), rule)
+}
+
 func matchRule(host string, ip net.IP, rule string) bool {
 	rule = strings.TrimSpace(rule)
 	if rule == "" {

@@ -33,6 +33,21 @@ func TestParseEternalSeptember(t *testing.T) {
 	}
 }
 
+func TestParseIncomingPassword(t *testing.T) {
+	incoming := `peer news-b {
+    hostname:       news-b.example
+    password:       s3cret
+}`
+	s, _ := ParseFile(incoming, "incoming")
+	if s == nil || s.Password != "s3cret" {
+		t.Fatalf("password: %#v", s)
+	}
+	out := FormatIncoming(*s)
+	if !strings.Contains(out, "password:") || !strings.Contains(out, "s3cret") {
+		t.Fatal(out)
+	}
+}
+
 func TestFormatRoundTrip(t *testing.T) {
 	s := Spec{
 		Name: "eternal-september", PathToken: "eternal-september.org",

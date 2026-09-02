@@ -108,6 +108,33 @@ func (f *Feeder) ihave(p store.Peer, msgid string, wire []byte) error {
 	if code != nntp.OKBannerPost && code != nntp.OKBannerNoPost {
 		return fmt.Errorf("greeting %s", line)
 	}
+	pass := strings.TrimSpace(p.OutgoingPassword)
+	if pass != "" {
+		user := strings.TrimSpace(p.Name)
+		if user == "" {
+			user = f.cfg.Server.Pathhost
+		}
+		if err := nc.ReplyRaw("AUTHINFO USER " + user); err != nil {
+			return err
+		}
+		code, line, err = nc.ReadReply()
+		if err != nil {
+			return err
+		}
+		if code != nntp.ContAuthPass {
+			return fmt.Errorf("AUTHINFO USER %s", line)
+		}
+		if err := nc.ReplyRaw("AUTHINFO PASS " + pass); err != nil {
+			return err
+		}
+		code, line, err = nc.ReadReply()
+		if err != nil {
+			return err
+		}
+		if code != nntp.OKAuth {
+			return fmt.Errorf("AUTHINFO PASS %s", line)
+		}
+	}
 	if err := nc.ReplyRaw("IHAVE " + msgid); err != nil {
 		return err
 	}

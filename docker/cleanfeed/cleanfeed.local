@@ -1,0 +1,22 @@
+# Minimal cleanfeed-ng policy for OpenUsenetServer containers.
+# Full reference: https://github.com/infybofh/cleanfeed-ng/blob/main/cleanfeed.local.example
+
+sub local_config {
+ %config_local = (
+  verbose => 1,
+  aggressive => 0,
+  block_binaries => 1,
+  block_user_spamcancels => 1,
+  malformed_encoding_check => 1,
+  malformed_encoding_mode => 'reject',
+  long_line_mode => 'reject',
+  do_emp_dump => 0,
+  emp_dump_file => '',
+  metrics_status_file => '',
+  metrics_csv_file => '',
+  html_report_file => '',
+  legacy_text_report_file => '',
+ );
+}
+
+1;

@@ -24,6 +24,7 @@ type Config struct {
 	GroupsSource GroupsSource `yaml:"groups_source"`
 	Inbound      Inbound      `yaml:"inbound"`
 	Inpaths      Inpaths      `yaml:"inpaths"`
+	Cleanfeed    Cleanfeed    `yaml:"cleanfeed"`
 	Archive      Archive      `yaml:"archive"`
 }
 
@@ -96,8 +97,34 @@ type GroupsSource struct {
 // With peers configured, enabled peer hostnames are always allowed (resolved to IP).
 // Set open: false to deny everyone not listed in allow or configured as a peer.
 type Inbound struct {
-	Open  *bool    `yaml:"open"`
-	Allow []string `yaml:"allow"` // hostnames and/or IP/CIDR
+	Open            *bool    `yaml:"open"`
+	Allow           []string `yaml:"allow"` // hostnames and/or IP/CIDR
+	RequirePeerAuth *bool    `yaml:"require_peer_auth"`
+}
+
+// PeerAuthRequired reports whether IHAVE must come from a configured peer with AUTHINFO.
+func (i Inbound) PeerAuthRequired() bool {
+	if i.RequirePeerAuth == nil {
+		return false
+	}
+	return *i.RequirePeerAuth
+}
+
+// Cleanfeed runs cleanfeed-ng through an external command (see scripts/cleanfeed-filter.pl).
+type Cleanfeed struct {
+	Enabled    bool   `yaml:"enabled"`
+	Mode       string `yaml:"mode"` // reject or audit
+	Command    string `yaml:"command"`
+	Script     string `yaml:"script"`     // cleanfeed-ng Perl script (CLEANFEED_SCRIPT)
+	ConfigDir  string `yaml:"config_dir"` // cleanfeed.local directory (CLEANFEED_CONFIG_DIR)
+}
+
+func (c Cleanfeed) Reject() bool {
+	return c.Enabled && strings.EqualFold(strings.TrimSpace(c.Mode), "reject")
+}
+
+func (c Cleanfeed) Audit() bool {
+	return c.Enabled && strings.EqualFold(strings.TrimSpace(c.Mode), "audit")
 }
 
 // Inpaths controls TOP1000 path statistics (ninpaths-compatible dumps).
@@ -263,7 +290,24 @@ func Load(path string) (Config, error) {
 	if strings.TrimSpace(cfg.Inpaths.Dir) == "" && cfg.Inpaths.Enabled {
 		cfg.Inpaths.Dir = "./pathlog"
 	}
+	cfg.Cleanfeed.Mode = strings.TrimSpace(cfg.Cleanfeed.Mode)
+	if cfg.Cleanfeed.Enabled && cfg.Cleanfeed.Mode == "" {
+		cfg.Cleanfeed.Mode = "reject"
+	}
+	cfg.fillCleanfeedDefaults()
 	return cfg, nil
+}
+
+func (c *Config) fillCleanfeedDefaults() {
+	if strings.TrimSpace(c.Cleanfeed.Command) == "" {
+		c.Cleanfeed.Command = "perl /usr/local/lib/openusenet/cleanfeed-filter.pl"
+	}
+	if strings.TrimSpace(c.Cleanfeed.Script) == "" {
+		c.Cleanfeed.Script = "/usr/local/lib/cleanfeed-ng/cleanfeed"
+	}
+	if strings.TrimSpace(c.Cleanfeed.ConfigDir) == "" {
+		c.Cleanfeed.ConfigDir = "/usr/local/lib/cleanfeed-ng/etc"
+	}
 }
 
 func applyEnv(cfg *Config) {
@@ -326,6 +370,25 @@ func applyEnv(cfg *Config) {
 	if v := os.Getenv("OPENUSENET_INBOUND_OPEN"); v != "" {
 		on := v == "1" || strings.EqualFold(v, "true") || strings.EqualFold(v, "yes")
 		cfg.Inbound.Open = &on
+	}
+	if v := os.Getenv("OPENUSENET_REQUIRE_PEER_AUTH"); v != "" {
+		on := v == "1" || strings.EqualFold(v, "true") || strings.EqualFold(v, "yes")
+		cfg.Inbound.RequirePeerAuth = &on
+	}
+	if v := os.Getenv("OPENUSENET_CLEANFEED"); v != "" {
+		cfg.Cleanfeed.Enabled = v == "1" || strings.EqualFold(v, "true") || strings.EqualFold(v, "yes")
+	}
+	if v := os.Getenv("OPENUSENET_CLEANFEED_MODE"); v != "" {
+		cfg.Cleanfeed.Mode = v
+	}
+	if v := os.Getenv("OPENUSENET_CLEANFEED_SCRIPT"); v != "" {
+		cfg.Cleanfeed.Script = v
+	}
+	if v := os.Getenv("OPENUSENET_CLEANFEED_CONFIG_DIR"); v != "" {
+		cfg.Cleanfeed.ConfigDir = v
+	}
+	if v := os.Getenv("OPENUSENET_CLEANFEED_COMMAND"); v != "" {
+		cfg.Cleanfeed.Command = v
 	}
 	if v := os.Getenv("OPENUSENET_INPATHS_DIR"); v != "" {
 		cfg.Inpaths.Dir = v

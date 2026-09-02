@@ -22,6 +22,7 @@ import (
 	"github.com/openusenet/openusenet/internal/inn"
 	"github.com/openusenet/openusenet/internal/isc"
 	"github.com/openusenet/openusenet/internal/nntp"
+	"github.com/openusenet/openusenet/internal/peerauth"
 	"github.com/openusenet/openusenet/internal/store"
 )
 
@@ -244,21 +245,23 @@ func (p *Portal) status(w http.ResponseWriter, r *http.Request, _ store.User) {
 	na, _ := p.st.CountArticles(ctx)
 	peers, _ := p.st.ListPeers(ctx)
 	type peerStat struct {
-		ID            int64  `json:"id"`
-		Name          string `json:"name"`
-		Host          string `json:"host"`
-		IncomingHost  string `json:"incoming_host"`
-		Port          int    `json:"port"`
-		Up            bool   `json:"up"`
-		Error         string `json:"error,omitempty"`
-		Notes         string `json:"notes"`
-		Enabled       bool   `json:"enabled"`
+		ID               int64  `json:"id"`
+		Name             string `json:"name"`
+		Host             string `json:"host"`
+		IncomingHost     string `json:"incoming_host"`
+		Port             int    `json:"port"`
+		Up               bool   `json:"up"`
+		Error            string `json:"error,omitempty"`
+		Notes            string `json:"notes"`
+		Enabled          bool   `json:"enabled"`
+		HasIncomingPass  bool   `json:"has_incoming_password"`
 	}
 	ps := make([]peerStat, 0, len(peers))
 	for _, peer := range peers {
 		st := peerStat{
 			ID: peer.ID, Name: peer.Name, Host: peer.Host, IncomingHost: peer.IncomingHost,
 			Port: peer.Port, Notes: peer.Notes, Enabled: peer.Enabled,
+			HasIncomingPass: strings.TrimSpace(peer.IncomingPassword) != "",
 		}
 		if peer.Enabled {
 			st.Up, st.Error = pingNNTP(peer.Addr(), 2*time.Second)
@@ -286,10 +289,15 @@ func (p *Portal) status(w http.ResponseWriter, r *http.Request, _ store.User) {
 		"mbox_dir":     p.cfg.Storage.MBoxDir,
 		"export_dir":   p.cfg.Archive.ExportDir,
 		"inbound": map[string]any{
-			"open":            inbound.Open(p.cfg, peerHosts),
-			"allow":           p.cfg.Inbound.Allow,
-			"effective_allow": inbound.EffectiveRules(p.cfg, peerHosts),
-			"peer_hosts":      peerHosts,
+			"open":               inbound.Open(p.cfg, peerHosts),
+			"allow":              p.cfg.Inbound.Allow,
+			"effective_allow":    inbound.EffectiveRules(p.cfg, peerHosts),
+			"peer_hosts":         peerHosts,
+			"require_peer_auth":  p.cfg.Inbound.PeerAuthRequired(),
+		},
+		"cleanfeed": map[string]any{
+			"enabled": p.cfg.Cleanfeed.Enabled,
+			"mode":    p.cfg.Cleanfeed.Mode,
 		},
 		"archive_schedule": p.cfg.Archive.Schedule,
 		"inpaths":          p.inpathsStatus(),
@@ -527,6 +535,7 @@ func (p *Portal) peers(w http.ResponseWriter, r *http.Request, _ store.User) {
 			return
 		}
 		in.ID = 0
+		peerauth.PreparePeer(p.cfg.Server.Pathhost, &in)
 		created, err := p.st.CreatePeer(r.Context(), in)
 		if err != nil {
 			writeErr(w, err)
@@ -539,6 +548,7 @@ func (p *Portal) peers(w http.ResponseWriter, r *http.Request, _ store.User) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
+		peerauth.PreparePeer(p.cfg.Server.Pathhost, &in)
 		peer, err := p.st.UpdatePeer(r.Context(), in)
 		if err != nil {
 			writeErr(w, err)
@@ -559,10 +569,21 @@ func (p *Portal) peers(w http.ResponseWriter, r *http.Request, _ store.User) {
 
 func (p *Portal) peerDetail(peer store.Peer) map[string]any {
 	spec := peer.INNSpec()
+	remote := strings.TrimSpace(peer.PathToken)
+	if remote == "" {
+		remote = strings.TrimSpace(peer.IncomingHost)
+	}
+	if remote == "" {
+		remote = peer.Host
+	}
+	opts := inn.ExportOpts{
+		RemotePathhost: remote,
+		Password:       peerauth.PairPassword(p.cfg.Server.Pathhost, remote),
+	}
 	return map[string]any{
 		"peer":     peer,
 		"snippets": inn.Snippets(spec),
-		"our_side": p.ourSideSnippets(inn.ExportOpts{}),
+		"our_side": p.ourSideSnippets(opts),
 	}
 }
 
@@ -645,6 +666,7 @@ func (p *Portal) peersImportINN(w http.ResponseWriter, r *http.Request, _ store.
 	}
 	preview := store.PeerFromINNSpec(*spec)
 	preview.Notes = strings.Join(warns, "; ")
+	peerauth.PreparePeer(p.cfg.Server.Pathhost, &preview)
 
 	if !in.Apply {
 		writeJSON(w, http.StatusOK, map[string]any{
@@ -671,6 +693,13 @@ func (p *Portal) peersImportINN(w http.ResponseWriter, r *http.Request, _ store.
 		up := store.PeerFromINNSpec(merged)
 		up.ID = cur.ID
 		up.Enabled = cur.Enabled
+		if strings.TrimSpace(up.IncomingPassword) == "" {
+			up.IncomingPassword = cur.IncomingPassword
+		}
+		if strings.TrimSpace(up.OutgoingPassword) == "" {
+			up.OutgoingPassword = cur.OutgoingPassword
+		}
+		peerauth.PreparePeer(p.cfg.Server.Pathhost, &up)
 		if cur.Notes != "" && preview.Notes == "" {
 			up.Notes = cur.Notes
 		} else if preview.Notes != "" {

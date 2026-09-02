@@ -18,12 +18,14 @@ type Spec struct {
 	Patterns      string   `json:"patterns"`
 	Distributions string   `json:"distributions"`
 	Flags         string   `json:"flags"`
+	Password      string   `json:"password,omitempty"`
 	Warnings      []string `json:"warnings,omitempty"`
 }
 
 var (
 	reIPName     = regexp.MustCompile(`(?i)^\s*ip-name\s*:\s*(\S+)`)
 	rePortNumber = regexp.MustCompile(`(?i)^\s*port-number\s*:\s*(\d+)`)
+	rePassword   = regexp.MustCompile(`(?i)^\s*password\s*:\s*(\S+)`)
 )
 
 // Defaults fills empty fields with sensible INN-compatible values.
@@ -93,7 +95,7 @@ func ParseFile(text, kind string) (*Spec, []string) {
 }
 
 func parseIncomingFile(text string) (*Spec, []string) {
-	var name, host string
+	var name, host, password string
 	var warns []string
 	inPeer := ""
 	sc := bufio.NewScanner(strings.NewReader(text))
@@ -115,6 +117,10 @@ func parseIncomingFile(text string) (*Spec, []string) {
 				name = inPeer
 				continue
 			}
+			if m := rePassword.FindStringSubmatch(line); m != nil {
+				password = strings.Trim(m[1], `";`)
+				continue
+			}
 			if strings.Contains(strings.ToLower(line), "streaming:") ||
 				strings.Contains(strings.ToLower(line), "patterns:") {
 				warns = appendUnique(warns, "ignored INN field: "+line)
@@ -124,7 +130,7 @@ func parseIncomingFile(text string) (*Spec, []string) {
 	if host == "" {
 		return nil, []string{"incoming.conf: no hostname found"}
 	}
-	s := &Spec{Name: name, IncomingHost: host, OutgoingHost: host, Port: 119, Patterns: "*", Flags: "Tm", Warnings: warns}
+	s := &Spec{Name: name, IncomingHost: host, OutgoingHost: host, Port: 119, Patterns: "*", Flags: "Tm", Password: password, Warnings: warns}
 	s.Defaults()
 	return s, warns
 }
@@ -206,7 +212,12 @@ func parseNewsfeedsFile(text string) (*Spec, []string) {
 // FormatIncoming renders an incoming.conf peer block for our server.
 func FormatIncoming(s Spec) string {
 	s.Defaults()
-	return fmt.Sprintf("peer %s {\n    hostname:       %s\n}\n", s.Name, s.IncomingHost)
+	out := fmt.Sprintf("peer %s {\n    hostname:       %s\n", s.Name, s.IncomingHost)
+	if strings.TrimSpace(s.Password) != "" {
+		out += fmt.Sprintf("    password:       %s\n", s.Password)
+	}
+	out += "}\n"
+	return out
 }
 
 // FormatInnfeed renders an innfeed.conf peer block for our server.
@@ -241,10 +252,12 @@ func Snippets(s Spec) map[string]string {
 
 // ExportOpts customizes the three INN snippets we send to a remote peer.
 type ExportOpts struct {
-	Patterns      string `json:"patterns"`
-	Distributions string `json:"distributions"`
-	Flags         string `json:"flags"`
-	Port          int    `json:"port"`
+	Patterns       string `json:"patterns"`
+	Distributions  string `json:"distributions"`
+	Flags          string `json:"flags"`
+	Port           int    `json:"port"`
+	RemotePathhost string `json:"remote_pathhost"`
+	Password       string `json:"password"`
 }
 
 // OurSide formats the three snippets we send to a remote peer so they can add us.
@@ -274,6 +287,7 @@ func OurSide(hostname, pathhost string, nntpPort int, opts ExportOpts) map[strin
 		Name: name, PathToken: hostname, IncomingHost: hostname,
 		OutgoingHost: hostname, Port: nntpPort,
 		Patterns: patterns, Distributions: strings.TrimSpace(opts.Distributions), Flags: flags,
+		Password: strings.TrimSpace(opts.Password),
 	}
 	return Snippets(s)
 }
@@ -303,6 +317,9 @@ func MergeSpec(dst *Spec, src Spec) {
 	}
 	if src.Flags != "" {
 		dst.Flags = src.Flags
+	}
+	if src.Password != "" {
+		dst.Password = src.Password
 	}
 	dst.Warnings = appendUnique(dst.Warnings, src.Warnings...)
 }

@@ -41,9 +41,11 @@ type Peer struct {
 	Patterns       string    `json:"patterns"`
 	Distributions  string    `json:"distributions"`
 	Flags          string    `json:"flags"`
-	Enabled        bool      `json:"enabled"`
-	Notes          string    `json:"notes"`
-	Created        time.Time `json:"created_at"`
+	Enabled          bool      `json:"enabled"`
+	IncomingPassword string    `json:"incoming_password,omitempty"`
+	OutgoingPassword string    `json:"outgoing_password,omitempty"`
+	Notes            string    `json:"notes"`
+	Created          time.Time `json:"created_at"`
 }
 
 func (p Peer) Addr() string {

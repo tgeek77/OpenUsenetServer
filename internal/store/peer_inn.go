@@ -14,6 +14,8 @@ func (p Peer) Normalize() Peer {
 	p.Patterns = strings.TrimSpace(p.Patterns)
 	p.Distributions = strings.TrimSpace(p.Distributions)
 	p.Flags = strings.TrimSpace(p.Flags)
+	p.IncomingPassword = strings.TrimSpace(p.IncomingPassword)
+	p.OutgoingPassword = strings.TrimSpace(p.OutgoingPassword)
 	if p.IncomingHost == "" {
 		p.IncomingHost = p.Host
 	}
@@ -45,6 +47,7 @@ func (p Peer) INNSpec() inn.Spec {
 		Name: p.Name, PathToken: p.PathToken, IncomingHost: p.IncomingHost,
 		OutgoingHost: p.Host, Port: p.Port, Patterns: p.Patterns,
 		Distributions: p.Distributions, Flags: p.Flags,
+		Password: p.IncomingPassword,
 	}
 }
 
@@ -54,6 +57,7 @@ func PeerFromINNSpec(s inn.Spec) Peer {
 		Name: s.Name, PathToken: s.PathToken, IncomingHost: s.IncomingHost,
 		Host: s.OutgoingHost, Port: s.Port, Patterns: s.Patterns,
 		Distributions: s.Distributions, Flags: s.Flags, Enabled: true,
+		IncomingPassword: s.Password, OutgoingPassword: s.Password,
 	}.Normalize()
 }
 

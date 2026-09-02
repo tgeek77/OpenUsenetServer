@@ -49,16 +49,25 @@ groups_source:
 #   - host: news-c
 #     port: 119
 
-# Who may IHAVE to us.
+# Who may IHAVE to us (INN incoming.conf model).
+# - require_peer_auth: true — only configured peers, must AUTHINFO PASS first (password: in incoming.conf).
 # - With no allow list and no peers configured: all remotes (dev default).
 # - With peers in the admin UI: enabled peer hostnames are allowed (DNS-resolved).
-# - Add IPs/CIDRs here for feeders that do not match a peer hostname.
 # - Set open: false to reject everyone not listed below or configured as a peer.
 # inbound:
+#   require_peer_auth: true
 #   open: false
 #   allow:
 #     - 192.168.1.0/24
-#     - feeder.example.org
+
+# Cleanfeed-ng is installed in the Docker image (see Dockerfile).
+# Enabled by default in docker-compose via OPENUSENET_CLEANFEED=true.
+# cleanfeed:
+#   enabled: true
+#   mode: reject
+#   command: perl /usr/local/lib/openusenet/cleanfeed-filter.pl
+#   script: /usr/local/lib/cleanfeed-ng/cleanfeed
+#   config_dir: /usr/local/lib/cleanfeed-ng/etc
 
 # TOP1000 path statistics (required by many peers, e.g. Eternal September).
 # Path headers are logged on POST/IHAVE; flush dumps and mail reports to top1000@anthologeek.net.

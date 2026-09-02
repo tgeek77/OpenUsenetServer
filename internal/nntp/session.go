@@ -13,8 +13,10 @@ import (
 	"github.com/openusenet/openusenet/internal/archive"
 	"github.com/openusenet/openusenet/internal/article"
 	"github.com/openusenet/openusenet/internal/auth"
+	"github.com/openusenet/openusenet/internal/cleanfeed"
 	"github.com/openusenet/openusenet/internal/config"
 	"github.com/openusenet/openusenet/internal/inbound"
+	"github.com/openusenet/openusenet/internal/peerauth"
 	"github.com/openusenet/openusenet/internal/store"
 	"github.com/openusenet/openusenet/internal/wildmat"
 )
@@ -35,9 +37,11 @@ type Session struct {
 	log      *log.Logger
 	feeder   Feeder
 	paths    PathRecorder
-	authUser string
-	authOK   bool
-	pending  string // AUTHINFO USER pending username
+	authUser      string
+	authOK        bool
+	feedAuthOK    bool
+	feedAuthPeer  int64
+	pending       string // AUTHINFO USER pending username
 }
 
 // Feeder is an outbound IHAVE client. Tests pass nil.
@@ -598,18 +602,25 @@ func cmdAuthinfo(s *Session, args []string) error {
 		if s.pending == "" {
 			return s.conn.Reply(ErrSyntax, "AUTHINFO USER required first")
 		}
+		pass := args[2]
 		u, err := s.store.GetUser(context.Background(), s.pending)
 		if err != nil {
 			return err
 		}
-		if u == nil || u.Disabled || !auth.CheckPassword(u.PasswordHash, args[2]) {
+		if u != nil && !u.Disabled && auth.CheckPassword(u.PasswordHash, pass) {
+			s.authUser = u.Username
+			s.authOK = true
 			s.pending = ""
-			return s.conn.Reply(FailAuthNeeded, "Authentication failed")
+			return s.conn.Reply(OKAuth, "Authentication accepted")
 		}
-		s.authUser = u.Username
-		s.authOK = true
+		if ok, peerID := s.tryFeedAuth(pass); ok {
+			s.feedAuthOK = true
+			s.feedAuthPeer = peerID
+			s.pending = ""
+			return s.conn.Reply(OKAuth, "Authentication accepted")
+		}
 		s.pending = ""
-		return s.conn.Reply(OKAuth, "Authentication accepted")
+		return s.conn.Reply(FailAuthNeeded, "Authentication failed")
 	default:
 		return s.conn.Reply(ErrCommand, "unsupported AUTHINFO")
 	}
@@ -632,6 +643,58 @@ func (s *Session) requirePostAuth() error {
 	}
 	if u == nil || !u.MayPost() {
 		return s.conn.Reply(FailPostAuth, "posting not permitted")
+	}
+	return nil
+}
+
+func (s *Session) tryFeedAuth(password string) (bool, int64) {
+	ctx := context.Background()
+	peers, err := s.store.ListEnabledPeers(ctx)
+	if err != nil {
+		return false, 0
+	}
+	peer := peerauth.MatchPeer(peers, s.conn.Remote())
+	if peer == nil {
+		return false, 0
+	}
+	require := s.cfg.Inbound.PeerAuthRequired() || strings.TrimSpace(peer.IncomingPassword) != ""
+	if !peerauth.VerifyFeedAuth(peer, password, require) {
+		return false, 0
+	}
+	return true, peer.ID
+}
+
+func (s *Session) requireFeedAuth(ctx context.Context) error {
+	peers, err := s.store.ListEnabledPeers(ctx)
+	if err != nil {
+		return err
+	}
+	peer := peerauth.MatchPeer(peers, s.conn.Remote())
+	if s.cfg.Inbound.PeerAuthRequired() {
+		if peer == nil {
+			return s.conn.Reply(ErrAccess, "IHAVE not permitted from your address")
+		}
+	}
+	if peer == nil {
+		return nil
+	}
+	want := strings.TrimSpace(peer.IncomingPassword)
+	if want == "" && !s.cfg.Inbound.PeerAuthRequired() {
+		return nil
+	}
+	if !s.feedAuthOK || s.feedAuthPeer != peer.ID {
+		return s.conn.Reply(FailAuthNeeded, "Authentication required for IHAVE")
+	}
+	return nil
+}
+
+func (s *Session) filterArticle(raw []byte, rejectCode int) error {
+	r := cleanfeed.Check(s.cfg.Cleanfeed, raw)
+	if r.Reject {
+		return s.conn.Reply(rejectCode, r.Reason)
+	}
+	if r.Audit && s.log != nil {
+		s.log.Printf("cleanfeed audit: %s", r.Reason)
 	}
 	return nil
 }
@@ -660,6 +723,9 @@ func cmdPost(s *Session, _ []string) error {
 		Organization: s.cfg.Server.Organization,
 	}); err != nil {
 		return s.conn.Reply(FailPostReject, err.Error())
+	}
+	if err := s.filterArticle(raw, FailPostReject); err != nil {
+		return err
 	}
 	ctx := context.Background()
 	dup, err := s.store.HasMessageID(ctx, art.Get("Message-ID"))
@@ -693,6 +759,9 @@ func cmdIHave(s *Session, args []string) error {
 	if !inbound.Allowed(s.cfg, s.conn.Remote(), peerHosts) {
 		return s.conn.Reply(ErrAccess, "IHAVE not permitted from your address")
 	}
+	if err := s.requireFeedAuth(ctx); err != nil {
+		return err
+	}
 	msgid := args[1]
 	if !article.ValidMessageID(msgid) {
 		return s.conn.Reply(ErrSyntax, "syntax error")
@@ -723,6 +792,9 @@ func cmdIHave(s *Session, args []string) error {
 		Hostname: s.cfg.Server.Hostname,
 	}); err != nil {
 		return s.conn.Reply(FailIHaveReject, err.Error())
+	}
+	if err := s.filterArticle(raw, FailIHaveReject); err != nil {
+		return err
 	}
 	if !strings.EqualFold(art.Get("Message-ID"), msgid) {
 		return s.conn.Reply(FailIHaveReject, "Message-ID does not match")

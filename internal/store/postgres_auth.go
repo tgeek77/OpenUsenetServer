@@ -117,7 +117,7 @@ func (p *Postgres) CountPeers(ctx context.Context) (int, error) {
 func (p *Postgres) ListPeers(ctx context.Context) ([]Peer, error) {
 	rows, err := p.pool.Query(ctx, `
 		SELECT id, name, path_token, incoming_host, host, port, patterns, distributions, flags,
-		       enabled, notes, created_at
+		       enabled, incoming_password, outgoing_password, notes, created_at
 		FROM peers ORDER BY host, port`)
 	if err != nil {
 		return nil, err
@@ -129,7 +129,7 @@ func (p *Postgres) ListPeers(ctx context.Context) ([]Peer, error) {
 func (p *Postgres) ListEnabledPeers(ctx context.Context) ([]Peer, error) {
 	rows, err := p.pool.Query(ctx, `
 		SELECT id, name, path_token, incoming_host, host, port, patterns, distributions, flags,
-		       enabled, notes, created_at
+		       enabled, incoming_password, outgoing_password, notes, created_at
 		FROM peers WHERE enabled ORDER BY host, port`)
 	if err != nil {
 		return nil, err
@@ -143,7 +143,8 @@ func scanPeers(rows pgx.Rows) ([]Peer, error) {
 	for rows.Next() {
 		var peer Peer
 		if err := rows.Scan(&peer.ID, &peer.Name, &peer.PathToken, &peer.IncomingHost, &peer.Host, &peer.Port,
-			&peer.Patterns, &peer.Distributions, &peer.Flags, &peer.Enabled, &peer.Notes, &peer.Created); err != nil {
+			&peer.Patterns, &peer.Distributions, &peer.Flags, &peer.Enabled,
+			&peer.IncomingPassword, &peer.OutgoingPassword, &peer.Notes, &peer.Created); err != nil {
 			return nil, err
 		}
 		out = append(out, peer)
@@ -155,10 +156,11 @@ func (p *Postgres) GetPeer(ctx context.Context, id int64) (*Peer, error) {
 	var peer Peer
 	err := p.pool.QueryRow(ctx, `
 		SELECT id, name, path_token, incoming_host, host, port, patterns, distributions, flags,
-		       enabled, notes, created_at
+		       enabled, incoming_password, outgoing_password, notes, created_at
 		FROM peers WHERE id=$1`, id).
 		Scan(&peer.ID, &peer.Name, &peer.PathToken, &peer.IncomingHost, &peer.Host, &peer.Port,
-			&peer.Patterns, &peer.Distributions, &peer.Flags, &peer.Enabled, &peer.Notes, &peer.Created)
+			&peer.Patterns, &peer.Distributions, &peer.Flags, &peer.Enabled,
+			&peer.IncomingPassword, &peer.OutgoingPassword, &peer.Notes, &peer.Created)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
@@ -174,11 +176,13 @@ func (p *Postgres) CreatePeer(ctx context.Context, peer Peer) (*Peer, error) {
 		return nil, errors.New("host required")
 	}
 	err := p.pool.QueryRow(ctx, `
-		INSERT INTO peers (name, path_token, incoming_host, host, port, patterns, distributions, flags, enabled, notes)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+		INSERT INTO peers (name, path_token, incoming_host, host, port, patterns, distributions, flags,
+			enabled, incoming_password, outgoing_password, notes)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
 		RETURNING id, created_at`,
 		peer.Name, peer.PathToken, peer.IncomingHost, peer.Host, peer.Port,
-		peer.Patterns, peer.Distributions, peer.Flags, peer.Enabled, peer.Notes).
+		peer.Patterns, peer.Distributions, peer.Flags, peer.Enabled,
+		peer.IncomingPassword, peer.OutgoingPassword, peer.Notes).
 		Scan(&peer.ID, &peer.Created)
 	if err != nil {
 		return nil, err
@@ -196,10 +200,12 @@ func (p *Postgres) UpdatePeer(ctx context.Context, peer Peer) (*Peer, error) {
 	}
 	tag, err := p.pool.Exec(ctx, `
 		UPDATE peers SET name=$2, path_token=$3, incoming_host=$4, host=$5, port=$6,
-			patterns=$7, distributions=$8, flags=$9, enabled=$10, notes=$11
+			patterns=$7, distributions=$8, flags=$9, enabled=$10,
+			incoming_password=$11, outgoing_password=$12, notes=$13
 		WHERE id=$1`,
 		peer.ID, peer.Name, peer.PathToken, peer.IncomingHost, peer.Host, peer.Port,
-		peer.Patterns, peer.Distributions, peer.Flags, peer.Enabled, peer.Notes)
+		peer.Patterns, peer.Distributions, peer.Flags, peer.Enabled,
+		peer.IncomingPassword, peer.OutgoingPassword, peer.Notes)
 	if err != nil {
 		return nil, err
 	}
