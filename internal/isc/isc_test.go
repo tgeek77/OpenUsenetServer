@@ -38,6 +38,18 @@ func TestParseActiveAndNewsgroups(t *testing.T) {
 	}
 }
 
+func TestSanitizeLatin1(t *testing.T) {
+	// 0xf2 is ô in latin1 and invalid as UTF-8 lead in this sequence.
+	raw := "foo.bar\tCaf" + string([]byte{0xe9}) + " discussion\n"
+	ds, err := ParseNewsgroups(strings.NewReader(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(ds["foo.bar"], "Caf") {
+		t.Fatalf("desc %q", ds["foo.bar"])
+	}
+}
+
 func TestFetchGzip(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/active.gz", func(w http.ResponseWriter, r *http.Request) {
