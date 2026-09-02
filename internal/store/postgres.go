@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	wmat "github.com/openusenet/openusenet/internal/wildmat"
 )
@@ -499,18 +500,19 @@ func (p *Postgres) Post(ctx context.Context, headers, body, msgid, subject, from
 	}
 	defer tx.Rollback(ctx)
 
-	var dummy int
-	err = tx.QueryRow(ctx, `SELECT 1 FROM history WHERE message_id=$1`, msgid).Scan(&dummy)
-	if err == nil {
-		return nil, ErrDuplicate
-	}
-	if !errors.Is(err, pgx.ErrNoRows) {
+	// Claim Message-ID first so concurrent IHAVE from two peers maps to ErrDuplicate
+	// instead of a unique-violation 403 on the articles insert.
+	tag, err := tx.Exec(ctx, `INSERT INTO history (message_id) VALUES ($1) ON CONFLICT DO NOTHING`, msgid)
+	if err != nil {
 		return nil, err
+	}
+	if tag.RowsAffected() == 0 {
+		return nil, ErrDuplicate
 	}
 
 	type ginfo struct {
-		id  int64
-		num int64
+		id   int64
+		num  int64
 		name string
 	}
 	var used []ginfo
@@ -547,6 +549,9 @@ func (p *Postgres) Post(ctx context.Context, headers, body, msgid, subject, from
 		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
 		msgid, subject, from, date, refs, bytes, lines, headers, body, xref).Scan(&artID)
 	if err != nil {
+		if isUniqueViolation(err) {
+			return nil, ErrDuplicate
+		}
 		return nil, err
 	}
 	for _, u := range used {
@@ -554,13 +559,22 @@ func (p *Postgres) Post(ctx context.Context, headers, body, msgid, subject, from
 			return nil, err
 		}
 	}
-	if _, err := tx.Exec(ctx, `INSERT INTO history (message_id) VALUES ($1)`, msgid); err != nil {
-		return nil, err
-	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, err
 	}
 	return &PostResult{MessageID: msgid, Xref: xref, Numbers: nums}, nil
+}
+
+func isUniqueViolation(err error) bool {
+	if err == nil {
+		return false
+	}
+	var pe *pgconn.PgError
+	if errors.As(err, &pe) {
+		return pe.Code == "23505"
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "23505") || strings.Contains(msg, "duplicate key")
 }
 
 func (p *Postgres) Next(ctx context.Context, group string, cur int64) (*StoredArticle, error) {

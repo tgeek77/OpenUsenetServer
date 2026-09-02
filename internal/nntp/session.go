@@ -730,7 +730,8 @@ func cmdIHave(s *Session, args []string) error {
 	} else if errors.Is(err, store.ErrDuplicate) {
 		return s.conn.Reply(FailIHaveReject, "duplicate Message-ID")
 	} else if err != nil {
-		return err
+		s.log.Printf("ihave store %s: %v", msgid, err)
+		return s.conn.Reply(FailIHaveDefer, "try again later")
 	}
 	if err := s.conn.Reply(OKIHave, "article transferred "+msgid); err != nil {
 		return err
