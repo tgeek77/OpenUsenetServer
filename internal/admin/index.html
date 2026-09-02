@@ -3,81 +3,149 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>OpenUsenet admin</title>
+<title>OpenUsenet</title>
 <style>
 :root {
   --bg: #12141a; --panel: #1b1f2a; --ink: #e8eadf; --muted: #9aa3b5;
   --line: #2a3140; --accent: #c4f542; --warn: #ffb020; --bad: #ff6b6b; --ok: #6ee7a8;
+  --unread: #f0f4c3;
 }
 * { box-sizing: border-box; }
-body { margin: 0; font: 15px/1.45 "IBM Plex Sans", "Segoe UI", sans-serif; background: var(--bg); color: var(--ink); }
-header { padding: 1.25rem 1.5rem 0.75rem; border-bottom: 1px solid var(--line); display: flex; flex-wrap: wrap; gap: 1rem; justify-content: space-between; align-items: flex-start; }
-header h1 { margin: 0; font-size: 1.25rem; letter-spacing: 0.04em; }
-header p { margin: 0.25rem 0 0; color: var(--muted); font-size: 0.9rem; }
-.warn { margin: 0.75rem 1.5rem 0; padding: 0.5rem 0.75rem; background: #3a2a12; color: var(--warn); border: 1px solid #5a4018; font-size: 0.85rem; }
-main { padding: 1rem 1.5rem 2.5rem; display: grid; gap: 1.25rem; }
-.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 0.75rem; }
-.card { background: var(--panel); border: 1px solid var(--line); padding: 0.85rem 1rem; }
-.card .n { font-size: 1.6rem; font-variant-numeric: tabular-nums; }
-.card .l { color: var(--muted); font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.06em; }
-section { background: var(--panel); border: 1px solid var(--line); padding: 1rem; }
-section h2 { margin: 0 0 0.75rem; font-size: 1rem; }
-.help { color: var(--muted); font-size: 0.85rem; margin: 0 0 0.75rem; }
-.row { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin-bottom: 0.75rem; }
-input, select, button, textarea {
-  font: inherit; background: #10131a; color: var(--ink); border: 1px solid var(--line); padding: 0.4rem 0.6rem;
+body { margin: 0; font: 15px/1.45 "IBM Plex Sans", "Segoe UI", sans-serif; background: var(--bg); color: var(--ink); height: 100vh; display: flex; flex-direction: column; }
+header { padding: 0.75rem 1.25rem; border-bottom: 1px solid var(--line); display: flex; flex-wrap: wrap; gap: 0.75rem; justify-content: space-between; align-items: center; flex-shrink: 0; }
+header h1 { margin: 0; font-size: 1.1rem; letter-spacing: 0.04em; }
+header .meta { color: var(--muted); font-size: 0.85rem; }
+.nav btn, .nav button, button.navbtn {
+  background: transparent; color: var(--ink); border: 1px solid var(--line); padding: 0.35rem 0.7rem; cursor: pointer; font: inherit;
 }
-textarea { width: 100%; min-height: 7rem; font-family: ui-monospace, monospace; font-size: 0.82rem; }
-button { background: var(--accent); color: #12141a; border: 0; font-weight: 600; cursor: pointer; }
-button.secondary { background: transparent; color: var(--ink); border: 1px solid var(--line); }
-table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
-th, td { text-align: left; padding: 0.4rem 0.5rem; border-bottom: 1px solid var(--line); vertical-align: top; }
-th { color: var(--muted); font-weight: 500; }
-.dot { display: inline-block; width: 0.6rem; height: 0.6rem; border-radius: 50%; margin-right: 0.35rem; }
-.up { background: var(--ok); } .down { background: var(--bad); }
-.mono { font-family: ui-monospace, "IBM Plex Mono", monospace; font-size: 0.82rem; }
-pre { white-space: pre-wrap; background: #10131a; padding: 0.75rem; border: 1px solid var(--line); max-height: 24rem; overflow: auto; }
-.hidden { display: none !important; }
+.navbtn.active { background: var(--accent); color: #12141a; border-color: var(--accent); font-weight: 600; }
+.warn { margin: 0.5rem 1.25rem 0; padding: 0.4rem 0.7rem; background: #3a2a12; color: var(--warn); border: 1px solid #5a4018; font-size: 0.85rem; }
 #authbox { max-width: 28rem; margin: 2rem auto; background: var(--panel); border: 1px solid var(--line); padding: 1.25rem; }
 #authbox h2 { margin-top: 0; }
+.row { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin-bottom: 0.5rem; }
+input, select, button, textarea {
+  font: inherit; background: #10131a; color: var(--ink); border: 1px solid var(--line); padding: 0.35rem 0.55rem;
+}
+textarea { width: 100%; min-height: 8rem; font-family: ui-monospace, monospace; font-size: 0.82rem; }
+button.primary, button:not(.secondary):not(.navbtn) { background: var(--accent); color: #12141a; border: 0; font-weight: 600; cursor: pointer; }
+button.secondary { background: transparent; color: var(--ink); border: 1px solid var(--line); cursor: pointer; }
+.hidden { display: none !important; }
+.help { color: var(--muted); font-size: 0.85rem; margin: 0 0 0.75rem; }
+.mono { font-family: ui-monospace, "IBM Plex Mono", monospace; font-size: 0.82rem; }
+.dot { display: inline-block; width: 0.55rem; height: 0.55rem; border-radius: 50%; margin-right: 0.3rem; }
+.up { background: var(--ok); } .down { background: var(--bad); }
+table { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
+th, td { text-align: left; padding: 0.35rem 0.45rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { color: var(--muted); font-weight: 500; }
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 0.6rem; margin-bottom: 1rem; }
+.card { background: var(--panel); border: 1px solid var(--line); padding: 0.7rem 0.85rem; }
+.card .n { font-size: 1.4rem; font-variant-numeric: tabular-nums; }
+.card .l { color: var(--muted); font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; }
+section.panel { background: var(--panel); border: 1px solid var(--line); padding: 0.85rem; margin-bottom: 1rem; }
+section.panel h2 { margin: 0 0 0.6rem; font-size: 1rem; }
+#admin { padding: 1rem 1.25rem 2rem; overflow: auto; flex: 1; }
+#reader { flex: 1; min-height: 0; display: grid; grid-template-columns: 220px 1fr 1.2fr; gap: 0; }
+@media (max-width: 960px) {
+  #reader { grid-template-columns: 1fr; grid-template-rows: auto 40vh 1fr; }
+}
+.rcol { border-right: 1px solid var(--line); overflow: auto; min-height: 0; background: var(--panel); }
+.rcol:last-child { border-right: 0; }
+.rcol h3 { margin: 0; padding: 0.6rem 0.75rem; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); border-bottom: 1px solid var(--line); }
+.subitem, .ovitem {
+  display: block; width: 100%; text-align: left; background: transparent; color: var(--ink); border: 0; border-bottom: 1px solid var(--line);
+  padding: 0.55rem 0.75rem; cursor: pointer; font: inherit;
+}
+.subitem:hover, .ovitem:hover, .subitem.active, .ovitem.active { background: #252a38; }
+.subitem .u { color: var(--accent); font-size: 0.75rem; float: right; }
+.ovitem.unread { color: var(--unread); font-weight: 600; }
+.ovitem .depth { color: var(--muted); }
+#artview { padding: 0.75rem; display: flex; flex-direction: column; gap: 0.5rem; height: 100%; }
+#artmeta { color: var(--muted); font-size: 0.82rem; }
+#artbody { flex: 1; overflow: auto; white-space: pre-wrap; background: #10131a; border: 1px solid var(--line); padding: 0.75rem; margin: 0; font-family: ui-monospace, monospace; font-size: 0.82rem; }
+#compose { border-top: 1px solid var(--line); padding: 0.75rem; background: #161922; }
+.toolbar { padding: 0.45rem 0.75rem; border-bottom: 1px solid var(--line); display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; }
 </style>
 </head>
 <body>
 <header>
   <div>
     <h1>OpenUsenet</h1>
-    <p id="sub">admin portal</p>
+    <div class="meta" id="sub">portal</div>
   </div>
+  <div class="row nav" id="nav"></div>
   <div class="row" id="userbar"></div>
 </header>
-<div class="warn" id="banner">Authentication protects this portal. NNTP reads stay open; POST requires AUTHINFO once users exist.</div>
 <div id="authbox" class="hidden"></div>
-<main id="app" class="hidden">
+<div id="reader" class="hidden">
+  <div class="rcol">
+    <h3>Subscriptions</h3>
+    <div class="toolbar">
+      <input id="gq" placeholder="find group…" size="14">
+      <button class="secondary" id="gfind">Find</button>
+    </div>
+    <div id="gfindres" class="hidden"></div>
+    <div id="subs"></div>
+  </div>
+  <div class="rcol">
+    <h3 id="ovtitle">Articles</h3>
+    <div class="toolbar">
+      <label><input type="checkbox" id="threaded" checked> threaded</label>
+      <button class="secondary" id="markall">Mark group read</button>
+      <button id="composenew">New post</button>
+    </div>
+    <div id="overview"></div>
+  </div>
+  <div class="rcol" id="artview">
+    <div class="row">
+      <button class="secondary" id="aprev">Prev</button>
+      <button class="secondary" id="anext">Next</button>
+      <button class="secondary" id="areply">Reply</button>
+    </div>
+    <div id="artmeta" class="mono">Select an article</div>
+    <pre id="artbody"></pre>
+    <div id="compose" class="hidden">
+      <div class="row">
+        <input id="cfrom" placeholder="From" size="28">
+        <input id="cgroups" placeholder="Newsgroups" size="24">
+      </div>
+      <div class="row">
+        <input id="csubj" placeholder="Subject" style="flex:1; min-width:12rem">
+      </div>
+      <textarea id="cbody" placeholder="Article body"></textarea>
+      <div class="row">
+        <button id="csend">Send</button>
+        <button class="secondary" id="ccancel">Cancel</button>
+        <span class="mono" id="cmsg"></span>
+      </div>
+    </div>
+  </div>
+</div>
+<main id="admin" class="hidden">
   <div class="cards" id="cards"></div>
-  <section>
+  <section class="panel">
     <h2>Peers</h2>
-    <p class="help">Outbound IHAVE destinations. Mutual peering means both servers add each other. Peers are stored in the database (YAML peers seed an empty DB on first boot).</p>
-    <p class="help"><strong>How to add a peer:</strong> use the form below, or paste an INN <code>newsfeeds</code> / <code>incoming.conf</code> snippet and preview before apply. Only host/port are imported; streaming and filters show as warnings.</p>
+    <p class="help">Outbound IHAVE destinations. Mutual peering means both servers add each other.</p>
+    <p class="help"><strong>How to add a peer:</strong> use the form, or paste INN newsfeeds / incoming.conf and preview before apply.</p>
     <div class="row">
       <input id="phost" placeholder="hostname" size="22">
       <select id="pport"><option value="119">119</option><option value="563">563</option></select>
       <input id="pnotes" placeholder="notes" size="24">
       <button id="padd">Add peer</button>
     </div>
-    <textarea id="pinn" placeholder="Paste INN newsfeeds or incoming.conf peer { hostname: ... } here"></textarea>
+    <textarea id="pinn" placeholder="Paste INN newsfeeds or incoming.conf peer { hostname: ... }"></textarea>
     <div class="row">
       <button class="secondary" id="ppreview">Preview INN paste</button>
       <button id="papply">Apply INN paste</button>
       <span class="mono" id="pmsg"></span>
     </div>
-    <pre id="pprev" class="hidden"></pre>
+    <pre id="pprev" class="hidden mono"></pre>
     <table>
       <thead><tr><th>Status</th><th>Host</th><th>Port</th><th>Notes</th><th></th></tr></thead>
       <tbody id="peers"></tbody>
     </table>
     <p class="mono" id="feed"></p>
   </section>
-  <section>
+  <section class="panel">
     <h2>Users</h2>
     <div class="row">
       <input id="uname" placeholder="username" size="16">
@@ -92,11 +160,11 @@ pre { white-space: pre-wrap; background: #10131a; padding: 0.75rem; border: 1px 
       <tbody id="users"></tbody>
     </table>
   </section>
-  <section>
+  <section class="panel">
     <h2>Archive export</h2>
-    <p class="help">Creates per-newsgroup <code>.mbox.gz</code> snapshots for Internet Archive / offsite use. Live articles in Postgres are never deleted.</p>
+    <p class="help">Per-newsgroup <code>.mbox.gz</code> snapshots. Live articles are never deleted.</p>
     <div class="row">
-      <input id="asel" placeholder="all or wildmat e.g. misc.test*" size="28" value="all">
+      <input id="asel" value="all" size="28">
       <button id="aexport">Export now</button>
       <span class="mono" id="amsg"></span>
     </div>
@@ -105,10 +173,10 @@ pre { white-space: pre-wrap; background: #10131a; padding: 0.75rem; border: 1px 
       <tbody id="ajobs"></tbody>
     </table>
   </section>
-  <section>
+  <section class="panel">
     <h2>Groups</h2>
     <div class="row">
-      <input id="gq" placeholder="search name…" size="24">
+      <input id="agq" placeholder="search name…" size="24">
       <label><input type="checkbox" id="busy" checked> with articles</label>
       <button class="secondary" id="gsearch">Search</button>
     </div>
@@ -125,17 +193,19 @@ pre { white-space: pre-wrap; background: #10131a; padding: 0.75rem; border: 1px 
       <tbody id="groups"></tbody>
     </table>
   </section>
-  <section>
+  <section class="panel">
     <h2>Recent articles</h2>
     <table>
       <thead><tr><th>When</th><th>Message-ID</th><th>From</th><th>Subject</th></tr></thead>
       <tbody id="arts"></tbody>
     </table>
-    <pre id="art" hidden></pre>
+    <pre id="art" class="mono" hidden></pre>
   </section>
 </main>
 <script>
 const $ = (id) => document.getElementById(id);
+let me = null, curGroup = null, curNum = 0, curArt = null, overview = [], replyTo = null;
+
 async function j(url, opt) {
   const r = await fetch(url, Object.assign({credentials:"same-origin"}, opt||{}));
   const t = await r.text();
@@ -146,11 +216,14 @@ async function j(url, opt) {
 function esc(s) {
   return String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c]));
 }
+
 function showAuth(setup) {
   $("authbox").classList.remove("hidden");
-  $("app").classList.add("hidden");
+  $("reader").classList.add("hidden");
+  $("admin").classList.add("hidden");
+  $("nav").innerHTML = "";
   $("authbox").innerHTML = setup
-    ? `<h2>Create first admin</h2><p class="help">No users yet. This account can manage the portal and post via AUTHINFO.</p>
+    ? `<h2>Create first admin</h2><p class="help">This account can administer the server and use the newsreader.</p>
        <div class="row"><input id="lu" placeholder="username"><input id="lp" type="password" placeholder="password"><button id="go">Create admin</button></div>
        <p class="mono" id="lmsg"></p>`
     : `<h2>Sign in</h2>
@@ -166,20 +239,204 @@ function showAuth(setup) {
     } catch (e) { $("lmsg").textContent = e.message; }
   };
 }
+
+function setMode(mode) {
+  const reader = mode === "reader";
+  $("reader").classList.toggle("hidden", !reader);
+  $("admin").classList.toggle("hidden", reader);
+  document.querySelectorAll(".navbtn").forEach(b => b.classList.toggle("active", b.dataset.mode === mode));
+  if (!reader) loadAdmin();
+}
+
 async function boot() {
-  const me = await j("/api/me");
+  me = await j("/api/me");
   if (me.needs_setup) { showAuth(true); return; }
   if (!me.logged_in) { showAuth(false); return; }
   $("authbox").classList.add("hidden");
-  $("app").classList.remove("hidden");
+  $("sub").textContent = (me.hostname || "") + " · signed in as " + me.user.username;
   $("userbar").innerHTML = `<span class="mono">${esc(me.user.username)} (${esc(me.user.role)})</span>
     <button class="secondary" id="out">Sign out</button>`;
   $("out").onclick = async () => { await j("/api/logout",{method:"POST"}); location.reload(); };
+  let nav = `<button class="navbtn active" data-mode="reader">Reader</button>`;
+  if (me.is_admin) nav += `<button class="navbtn" data-mode="admin">Admin</button>`;
+  $("nav").innerHTML = nav;
+  $("nav").onclick = (e) => {
+    const b = e.target.closest(".navbtn");
+    if (b) setMode(b.dataset.mode);
+  };
+  $("cfrom").value = me.user.username + "@" + (me.hostname || "news");
+  setMode("reader");
+  await loadSubs();
+}
+
+async function loadSubs() {
+  const d = await j("/api/reader/subscriptions");
+  $("subs").innerHTML = (d.subscriptions||[]).map(s =>
+    `<button class="subitem ${curGroup===s.group?"active":""}" data-g="${esc(s.group)}">
+      <span class="u">${s.unread?s.unread:""}</span>${esc(s.group)}
+     </button>`
+  ).join("") || `<div class="help" style="padding:0.75rem">No subscriptions yet. Find a group above.</div>`;
+  $("subs").onclick = async (e) => {
+    const b = e.target.closest("button[data-g]");
+    if (!b) return;
+    await openGroup(b.dataset.g);
+  };
+}
+
+$("gfind").onclick = async () => {
+  const q = encodeURIComponent($("gq").value);
+  const d = await j("/api/reader/groups?q="+q+"&busy=0&limit=30");
+  $("gfindres").classList.remove("hidden");
+  $("gfindres").innerHTML = (d.groups||[]).map(g =>
+    `<button class="subitem" data-sg="${esc(g.name)}">${esc(g.name)} <span class="mono">(${esc(g.count)})</span></button>`
+  ).join("") || `<div class="help" style="padding:0.5rem">No matches</div>`;
+};
+$("gfindres").onclick = async (e) => {
+  const b = e.target.closest("button[data-sg]");
+  if (!b) return;
+  await j("/api/reader/subscriptions", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({group:b.dataset.sg})});
+  $("gfindres").classList.add("hidden");
+  await loadSubs();
+  await openGroup(b.dataset.sg);
+};
+
+function threadDepth(refs) {
+  if (!refs) return 0;
+  return Math.min(12, (refs.match(/</g) || []).length);
+}
+
+function orderedOverview(rows, threaded) {
+  if (!threaded) return rows.slice().sort((a,b)=>a.num-b.num);
+  const byId = {};
+  rows.forEach(r => { byId[r.message_id] = r; });
+  const children = {};
+  const roots = [];
+  rows.forEach(r => {
+    const refs = (r.references||"").trim().split(/\s+/).filter(Boolean);
+    const parent = refs.length ? refs[refs.length-1] : null;
+    if (parent && byId[parent]) {
+      (children[parent] = children[parent] || []).push(r);
+    } else roots.push(r);
+  });
+  const out = [];
+  function walk(r, depth) {
+    out.push(Object.assign({}, r, {_depth: depth}));
+    (children[r.message_id]||[]).sort((a,b)=>a.num-b.num).forEach(c => walk(c, depth+1));
+  }
+  roots.sort((a,b)=>a.num-b.num).forEach(r => walk(r, 0));
+  // orphans already in roots if parent missing
+  return out;
+}
+
+async function openGroup(name) {
+  curGroup = name;
+  curArt = null;
+  curNum = 0;
+  $("ovtitle").textContent = name;
+  $("artmeta").textContent = "Select an article";
+  $("artbody").textContent = "";
+  await loadSubs();
+  const d = await j("/api/reader/groups/"+encodeURIComponent(name)+"/overview");
+  overview = d.overview || [];
+  renderOverview(d.last_read_num || 0);
+}
+
+function renderOverview(lastRead) {
+  const rows = orderedOverview(overview, $("threaded").checked);
+  $("overview").innerHTML = rows.map(r => {
+    const depth = r._depth != null ? r._depth : threadDepth(r.references);
+    const unread = r.num > lastRead;
+    return `<button class="ovitem ${unread?"unread":""} ${curNum===r.num?"active":""}" data-n="${r.num}">
+      <span class="depth">${"· ".repeat(depth)}</span>#${r.num} ${esc(r.subject)}
+      <div class="mono" style="color:var(--muted)">${esc(r.from)}</div>
+    </button>`;
+  }).join("") || `<div class="help" style="padding:0.75rem">No articles in this group</div>`;
+}
+
+$("overview").onclick = async (e) => {
+  const b = e.target.closest("button[data-n]");
+  if (!b) return;
+  await openArticle(Number(b.dataset.n));
+};
+
+$("threaded").onchange = () => { if (curGroup) openGroup(curGroup); };
+
+async function openArticle(num) {
+  if (!curGroup) return;
+  const d = await j("/api/reader/groups/"+encodeURIComponent(curGroup)+"/article/"+num);
+  curNum = d.num;
+  curArt = d;
+  $("artmeta").textContent = `#${d.num} ${d.subject}\nFrom: ${d.from}\nDate: ${d.date}\nMessage-ID: ${d.message_id}`;
+  $("artbody").textContent = (d.headers||"") + "\n\n" + (d.body||"");
+  $("aprev").dataset.n = d.prev || "";
+  $("anext").dataset.n = d.next || "";
+  await refreshOverviewKeepArt();
+}
+
+async function refreshOverviewKeepArt() {
+  if (!curGroup) return;
+  const d = await j("/api/reader/groups/"+encodeURIComponent(curGroup)+"/overview");
+  overview = d.overview || [];
+  renderOverview(d.last_read_num || 0);
+  await loadSubs();
+}
+
+$("aprev").onclick = () => { const n = Number($("aprev").dataset.n); if (n) openArticle(n); };
+$("anext").onclick = () => { const n = Number($("anext").dataset.n); if (n) openArticle(n); };
+$("markall").onclick = async () => {
+  if (!curGroup) return;
+  await j("/api/reader/groups/"+encodeURIComponent(curGroup)+"/read", {
+    method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({all:true})
+  });
+  await refreshOverviewKeepArt();
+};
+
+function showCompose(reply) {
+  replyTo = reply;
+  $("compose").classList.remove("hidden");
+  $("cgroups").value = curGroup || "local.test";
+  if (reply) {
+    $("csubj").value = reply.subject && reply.subject.startsWith("Re:") ? reply.subject : ("Re: " + (reply.subject||""));
+    $("cbody").value = "\n\n" + (reply.from ? (reply.from + " wrote:\n") : "") +
+      (reply.body||"").split("\n").map(l => "> " + l).join("\n");
+  } else {
+    $("csubj").value = "";
+    $("cbody").value = "";
+  }
+}
+$("composenew").onclick = () => showCompose(null);
+$("areply").onclick = () => { if (curArt) showCompose(curArt); };
+$("ccancel").onclick = () => { $("compose").classList.add("hidden"); replyTo = null; };
+$("csend").onclick = async () => {
+  $("cmsg").textContent = "";
+  try {
+    const body = {
+      from: $("cfrom").value,
+      newsgroups: $("cgroups").value,
+      subject: $("csubj").value,
+      body: $("cbody").value,
+    };
+    if (replyTo) {
+      body.reply_to_msgid = replyTo.message_id;
+      body.references = (replyTo.references ? replyTo.references + " " : "") + replyTo.message_id;
+    }
+    const d = await j("/api/reader/post", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body)});
+    $("cmsg").textContent = "posted " + d.message_id;
+    $("compose").classList.add("hidden");
+    const g = curGroup || body.newsgroups.split(",")[0].trim();
+    await openGroup(g);
+    const nums = d.numbers || {};
+    const n = nums[g];
+    if (n) await openArticle(n);
+  } catch (e) { $("cmsg").textContent = e.message; }
+};
+
+// Admin
+async function loadAdmin() {
   await Promise.all([loadStatus(), loadGroups(), loadArts(), loadUsers(), loadJobs()]);
 }
 async function loadStatus() {
   const s = await j("/api/status");
-  $("sub").textContent = s.hostname + " · " + s.software + " " + s.version + " · nntp " + s.listen_nntp + " · http " + s.listen_http;
   $("cards").innerHTML = [
     ["Groups", s.groups], ["Articles", s.articles], ["Peers", (s.peers||[]).length],
     ["Feed OK", s.feed && s.feed.ok], ["Feed fail", s.feed && s.feed.fail],
@@ -188,7 +445,7 @@ async function loadStatus() {
     `<tr><td><span class="dot ${p.up?"up":"down"}"></span>${p.enabled?(p.up?"up":"down"):"off"}</td>
      <td class="mono">${esc(p.host)}</td><td>${esc(p.port)}</td><td class="mono">${esc(p.notes||p.error||"")}</td>
      <td><button class="secondary" data-del="${p.id}">Remove</button></td></tr>`
-  ).join("") || `<tr><td colspan="5">No peers configured</td></tr>`;
+  ).join("") || `<tr><td colspan="5">No peers</td></tr>`;
   $("feed").textContent = s.feed && s.feed.last ? ("last IHAVE " + s.feed.last) : "";
   $("peers").onclick = async (e) => {
     const b = e.target.closest("button[data-del]");
@@ -198,7 +455,7 @@ async function loadStatus() {
   };
 }
 async function loadGroups() {
-  const q = encodeURIComponent($("gq").value);
+  const q = encodeURIComponent($("agq").value);
   const busy = $("busy").checked ? "1" : "0";
   const d = await j("/api/groups?q="+q+"&busy="+busy);
   $("groups").innerHTML = (d.groups||[]).map(g =>
@@ -209,7 +466,7 @@ async function loadArts() {
   const d = await j("/api/articles");
   $("arts").innerHTML = (d.articles||[]).map(a =>
     `<tr data-id="${esc(a.message_id)}"><td class="mono">${esc(a.stored_at)}</td><td class="mono">${esc(a.message_id)}</td><td>${esc(a.from)}</td><td>${esc(a.subject)}</td></tr>`
-  ).join("") || `<tr><td colspan="4">No articles yet</td></tr>`;
+  ).join("") || `<tr><td colspan="4">No articles</td></tr>`;
 }
 async function loadUsers() {
   const d = await j("/api/users");
@@ -229,26 +486,23 @@ async function loadJobs() {
   $("ajobs").innerHTML = (d.jobs||[]).map(j =>
     `<tr><td class="mono">${esc(j.id)}</td><td>${esc(j.status)}</td><td class="mono">${esc(j.selector)}</td>
      <td class="mono">${esc(j.error||j.dir||"")}</td><td>${esc(j.groups)}</td><td>${esc(j.articles)}</td></tr>`
-  ).join("") || `<tr><td colspan="6">No export jobs yet</td></tr>`;
+  ).join("") || `<tr><td colspan="6">No export jobs</td></tr>`;
 }
 $("gsearch").onclick = loadGroups;
-$("gq").addEventListener("keydown", e => { if (e.key==="Enter") loadGroups(); });
 $("gadd").onclick = async () => {
-  $("gmsg").textContent = "";
   try {
     await j("/api/groups", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({
       name: $("gname").value, description: $("gdesc").value, status: $("gstat").value
     })});
-    $("gmsg").textContent = "added " + $("gname").value;
-    $("busy").checked = false; $("gq").value = $("gname").value;
+    $("gmsg").textContent = "added";
     await loadGroups(); await loadStatus();
   } catch (e) { $("gmsg").textContent = e.message; }
 };
 $("isc").onclick = async () => {
-  $("gmsg").textContent = "pulling ISC list…";
+  $("gmsg").textContent = "pulling…";
   try {
     const d = await j("/api/isc", {method:"POST"});
-    $("gmsg").textContent = "loaded " + d.loaded + " groups from ISC";
+    $("gmsg").textContent = "loaded " + d.loaded;
     await loadStatus(); await loadGroups();
   } catch (e) { $("gmsg").textContent = e.message; }
 };
@@ -267,7 +521,6 @@ async function innPaste(apply) {
       body: JSON.stringify({text: $("pinn").value, apply})});
     $("pprev").classList.remove("hidden");
     $("pprev").textContent = JSON.stringify(d.preview || d, null, 2);
-    $("pmsg").textContent = apply ? ("created "+(d.created||[]).length) : "preview ready";
     if (apply) await loadStatus();
   } catch (e) { $("pmsg").textContent = e.message; }
 }
@@ -286,7 +539,7 @@ $("aexport").onclick = async () => {
   try {
     const d = await j("/api/archive", {method:"POST", headers:{"Content-Type":"application/json"},
       body: JSON.stringify({selector: $("asel").value})});
-    $("amsg").textContent = "job " + d.job.id + " " + d.job.status;
+    $("amsg").textContent = "job " + d.job.id;
     setTimeout(loadJobs, 800);
   } catch (e) { $("amsg").textContent = e.message; }
 };
@@ -297,8 +550,8 @@ $("arts").addEventListener("click", async (e) => {
   $("art").hidden = false;
   $("art").textContent = (d.headers||"") + "\n\n" + (d.body||"");
 });
+
 boot().catch(e => { $("sub").textContent = e.message; });
-setInterval(() => { if (!$("app").classList.contains("hidden")) { loadStatus(); loadArts(); loadJobs(); } }, 15000);
 </script>
 </body>
 </html>

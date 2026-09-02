@@ -4,6 +4,7 @@ import (
 	"context"
 	_ "embed"
 	"encoding/json"
+	"log"
 	"net"
 	"net/http"
 	"strconv"
@@ -28,17 +29,22 @@ var indexHTML []byte
 type Portal struct {
 	cfg     config.Config
 	st      store.Store
+	mbox    *archive.MBox
 	feeder  *feed.Feeder
 	sess    *auth.Sessions
 	started time.Time
 	jobsMu  sync.Mutex
 	jobs    map[string]*store.ArchiveJob
+	log     *log.Logger
 }
 
-func New(cfg config.Config, st store.Store, feeder *feed.Feeder) *Portal {
+func New(cfg config.Config, st store.Store, mbox *archive.MBox, feeder *feed.Feeder, lg *log.Logger) *Portal {
+	if lg == nil {
+		lg = log.Default()
+	}
 	return &Portal{
-		cfg: cfg, st: st, feeder: feeder, sess: auth.NewSessions(),
-		started: time.Now().UTC(), jobs: map[string]*store.ArchiveJob{},
+		cfg: cfg, st: st, mbox: mbox, feeder: feeder, sess: auth.NewSessions(),
+		started: time.Now().UTC(), jobs: map[string]*store.ArchiveJob{}, log: lg,
 	}
 }
 
@@ -59,6 +65,7 @@ func (p *Portal) Handler() http.Handler {
 	mux.HandleFunc("/api/peers/import-inn", p.withAuth(p.peersImportINN, true))
 	mux.HandleFunc("/api/archive", p.withAuth(p.archiveAPI, true))
 	mux.HandleFunc("/api/archive/jobs", p.withAuth(p.archiveJobs, true))
+	mux.HandleFunc("/api/reader/", p.withAuth(p.reader, false))
 	return mux
 }
 
@@ -211,6 +218,9 @@ func (p *Portal) me(w http.ResponseWriter, r *http.Request) {
 		"needs_setup": need,
 		"user":        publicUser(u),
 		"logged_in":   ok,
+		"hostname":    p.cfg.Server.Hostname,
+		"can_post":    ok && u.MayPost(),
+		"is_admin":    ok && u.IsAdmin(),
 	})
 }
 
@@ -219,7 +229,7 @@ func publicUser(u store.User) map[string]any {
 		return nil
 	}
 	return map[string]any{
-		"username": u.Username, "role": u.Role, "can_post": u.CanPost, "disabled": u.Disabled,
+		"id": u.ID, "username": u.Username, "role": u.Role, "can_post": u.CanPost, "disabled": u.Disabled,
 	}
 }
 

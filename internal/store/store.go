@@ -16,16 +16,16 @@ type Group struct {
 }
 
 type OverviewRow struct {
-	Num      int64
-	Subject  string
-	From     string
-	Date     string
-	MsgID    string
-	Refs     string
-	Bytes    int
-	Lines    int
-	Xref     string
-	Header   string // for HDR: the requested header value
+	Num      int64  `json:"num"`
+	Subject  string `json:"subject"`
+	From     string `json:"from"`
+	Date     string `json:"date"`
+	MsgID    string `json:"message_id"`
+	Refs     string `json:"references"`
+	Bytes    int    `json:"bytes"`
+	Lines    int    `json:"lines"`
+	Xref     string `json:"xref"`
+	Header   string `json:"header,omitempty"` // for HDR: the requested header value
 }
 
 type StoredArticle struct {
@@ -86,6 +86,12 @@ type Store interface {
 	CountPeers(ctx context.Context) (int, error)
 
 	ArticlesForGroup(ctx context.Context, group string) ([]StoredArticle, error)
+
+	ListSubscriptions(ctx context.Context, userID int64) ([]Subscription, error)
+	Subscribe(ctx context.Context, userID int64, group string) error
+	Unsubscribe(ctx context.Context, userID int64, group string) error
+	GetReadState(ctx context.Context, userID int64, group string) (int64, error)
+	SetReadState(ctx context.Context, userID int64, group string, lastReadNum int64) error
 
 	Close() error
 }

@@ -81,7 +81,7 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 }
 
 func (s *Server) serveHTTP(ctx context.Context) error {
-	handler := admin.New(s.cfg, s.st, s.feeder).Handler()
+	handler := admin.New(s.cfg, s.st, s.mbox, s.feeder, s.log).Handler()
 	if err := s.listenHTTP(ctx, s.cfg.Listen.HTTP, false, handler); err != nil {
 		return err
 	}

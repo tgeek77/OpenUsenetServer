@@ -33,6 +33,8 @@ type Memory struct {
 	peers   map[int64]*Peer
 	nextUID int64
 	nextPID int64
+	subs    map[int64]map[string]time.Time // userID -> group -> subscribed_at
+	reads   map[int64]map[string]int64     // userID -> group -> last_read_num
 }
 
 func NewMemory() *Memory {
@@ -43,6 +45,8 @@ func NewMemory() *Memory {
 		history: map[string]time.Time{},
 		users:   map[string]*User{},
 		peers:   map[int64]*Peer{},
+		subs:    map[int64]map[string]time.Time{},
+		reads:   map[int64]map[string]int64{},
 	}
 }
 
@@ -612,6 +616,85 @@ func (m *Memory) ArticlesForGroup(_ context.Context, group string) ([]StoredArti
 		out = append(out, cp)
 	}
 	return out, nil
+}
+
+func (m *Memory) ListSubscriptions(_ context.Context, userID int64) ([]Subscription, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	sm := m.subs[userID]
+	out := make([]Subscription, 0, len(sm))
+	for name, at := range sm {
+		s := Subscription{GroupName: name, SubscribedAt: at}
+		if g, ok := m.groups[name]; ok {
+			s.Description = g.Description
+			s.Status = g.Status
+			s.Low = g.Low
+			s.High = g.High
+			s.Count = g.Count
+		}
+		if rm := m.reads[userID]; rm != nil {
+			s.LastReadNum = rm[name]
+		}
+		if s.High > s.LastReadNum {
+			s.Unread = s.High - s.LastReadNum
+		}
+		out = append(out, s)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].GroupName < out[j].GroupName })
+	return out, nil
+}
+
+func (m *Memory) Subscribe(_ context.Context, userID int64, group string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	group = strings.TrimSpace(group)
+	if group == "" {
+		return errors.New("group required")
+	}
+	if _, ok := m.groups[group]; !ok {
+		return ErrNoGroup
+	}
+	if m.subs[userID] == nil {
+		m.subs[userID] = map[string]time.Time{}
+	}
+	if _, ok := m.subs[userID][group]; !ok {
+		m.subs[userID][group] = time.Now().UTC()
+	}
+	return nil
+}
+
+func (m *Memory) Unsubscribe(_ context.Context, userID int64, group string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if sm := m.subs[userID]; sm != nil {
+		delete(sm, strings.TrimSpace(group))
+	}
+	return nil
+}
+
+func (m *Memory) GetReadState(_ context.Context, userID int64, group string) (int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if rm := m.reads[userID]; rm != nil {
+		return rm[strings.TrimSpace(group)], nil
+	}
+	return 0, nil
+}
+
+func (m *Memory) SetReadState(_ context.Context, userID int64, group string, lastReadNum int64) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if lastReadNum < 0 {
+		lastReadNum = 0
+	}
+	if m.reads[userID] == nil {
+		m.reads[userID] = map[string]int64{}
+	}
+	group = strings.TrimSpace(group)
+	if cur, ok := m.reads[userID][group]; !ok || lastReadNum > cur {
+		m.reads[userID][group] = lastReadNum
+	}
+	return nil
 }
 
 var (

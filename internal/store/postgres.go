@@ -75,6 +75,20 @@ CREATE TABLE IF NOT EXISTS peers (
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (host, port)
 );
+
+CREATE TABLE IF NOT EXISTS subscriptions (
+    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    group_name TEXT NOT NULL,
+    subscribed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (user_id, group_name)
+);
+
+CREATE TABLE IF NOT EXISTS read_state (
+    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    group_name TEXT NOT NULL,
+    last_read_num BIGINT NOT NULL DEFAULT 0,
+    PRIMARY KEY (user_id, group_name)
+);
 `
 
 type Postgres struct {
