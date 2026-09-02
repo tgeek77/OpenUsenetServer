@@ -90,8 +90,56 @@ func (p *Postgres) EnsureGroup(ctx context.Context, name, desc, status string) e
 	_, err := p.pool.Exec(ctx, `
 		INSERT INTO newsgroups (name, description, status)
 		VALUES ($1, $2, $3)
-		ON CONFLICT (name) DO NOTHING`, name, desc, status)
+		ON CONFLICT (name) DO UPDATE SET
+			description = CASE WHEN EXCLUDED.description <> '' THEN EXCLUDED.description ELSE newsgroups.description END,
+			status = EXCLUDED.status`, name, desc, status)
 	return err
+}
+
+func (p *Postgres) EnsureGroups(ctx context.Context, groups []Group) error {
+	const batch = 200
+	for i := 0; i < len(groups); i += batch {
+		end := i + batch
+		if end > len(groups) {
+			end = len(groups)
+		}
+		if err := p.ensureGroupBatch(ctx, groups[i:end]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (p *Postgres) ensureGroupBatch(ctx context.Context, groups []Group) error {
+	if len(groups) == 0 {
+		return nil
+	}
+	var b strings.Builder
+	args := make([]any, 0, len(groups)*3)
+	b.WriteString(`INSERT INTO newsgroups (name, description, status) VALUES `)
+	for i, g := range groups {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		n := i * 3
+		fmt.Fprintf(&b, "($%d,$%d,$%d)", n+1, n+2, n+3)
+		status := g.Status
+		if status == "" {
+			status = "y"
+		}
+		args = append(args, g.Name, g.Description, status)
+	}
+	b.WriteString(` ON CONFLICT (name) DO UPDATE SET
+		description = CASE WHEN EXCLUDED.description <> '' THEN EXCLUDED.description ELSE newsgroups.description END,
+		status = EXCLUDED.status`)
+	_, err := p.pool.Exec(ctx, b.String(), args...)
+	return err
+}
+
+func (p *Postgres) CountGroups(ctx context.Context) (int, error) {
+	var n int
+	err := p.pool.QueryRow(ctx, `SELECT COUNT(*) FROM newsgroups`).Scan(&n)
+	return n, err
 }
 
 func (p *Postgres) ListGroups(ctx context.Context, wildmat string) ([]Group, error) {

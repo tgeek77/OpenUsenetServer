@@ -44,17 +44,36 @@ func (m *Memory) Close() error { return nil }
 func (m *Memory) EnsureGroup(_ context.Context, name, desc, status string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if _, ok := m.groups[name]; ok {
-		return nil
-	}
 	if status == "" {
 		status = "y"
+	}
+	if g, ok := m.groups[name]; ok {
+		if desc != "" {
+			g.Description = desc
+		}
+		g.Status = status
+		return nil
 	}
 	m.groups[name] = &memGroup{Group: Group{
 		Name: name, Description: desc, Status: status, CreatedAt: time.Now(),
 	}}
 	m.byNum[name] = map[int64]*memArt{}
 	return nil
+}
+
+func (m *Memory) EnsureGroups(ctx context.Context, groups []Group) error {
+	for _, g := range groups {
+		if err := m.EnsureGroup(ctx, g.Name, g.Description, g.Status); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (m *Memory) CountGroups(_ context.Context) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.groups), nil
 }
 
 func (m *Memory) ListGroups(_ context.Context, wildmat string) ([]Group, error) {

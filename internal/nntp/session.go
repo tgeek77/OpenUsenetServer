@@ -26,13 +26,19 @@ type Session struct {
 	cur    int64
 	closed bool
 	log    *log.Logger
+	feeder Feeder
 }
 
-func Serve(conn *Conn, st store.Store, mbox *archive.MBox, cfg config.Config, lg *log.Logger) {
+// Feeder is an outbound IHAVE client. Tests pass nil.
+type Feeder interface {
+	Offer(msgid, path string, groups []string, wire []byte)
+}
+
+func Serve(conn *Conn, st store.Store, mbox *archive.MBox, cfg config.Config, lg *log.Logger, feeder Feeder) {
 	if lg == nil {
 		lg = log.Default()
 	}
-	s := &Session{conn: conn, store: st, mbox: mbox, cfg: cfg, log: lg}
+	s := &Session{conn: conn, store: st, mbox: mbox, cfg: cfg, log: lg, feeder: feeder}
 	defer conn.Close()
 	if err := conn.Reply(OKBannerPost, Software+" "+Version+" posting allowed"); err != nil {
 		return
@@ -101,6 +107,7 @@ var commands = map[string]cmd{
 	"HDR":          {2, 3, cmdHdr},
 	"XHDR":         {2, 3, cmdHdr},
 	"POST":         {1, 1, cmdPost},
+	"IHAVE":        {2, 2, cmdIHave},
 	"NEWNEWS":      {4, 5, cmdNewnews},
 	"NEWGROUPS":    {3, 4, cmdNewgroups},
 	"SLAVE":        {1, 1, cmdSlave},
@@ -118,6 +125,7 @@ func cmdCapabilities(s *Session, _ []string) error {
 		"NEWNEWS",
 		"HDR",
 		"OVER MSGID",
+		"IHAVE",
 		"LIST ACTIVE NEWSGROUPS ACTIVE.TIMES OVERVIEW.FMT HEADERS",
 		"IMPLEMENTATION " + Software + " " + Version,
 	}
@@ -138,6 +146,7 @@ func cmdHelp(s *Session, _ []string) error {
 		"  HDR header [range|<message-id>]\r\n" +
 		"  HEAD [number|<message-id>]\r\n" +
 		"  HELP\r\n" +
+		"  IHAVE <message-id>\r\n" +
 		"  LAST\r\n" +
 		"  LIST [ACTIVE [wildmat]|NEWSGROUPS [wildmat]|ACTIVE.TIMES [wildmat]|OVERVIEW.FMT|HEADERS]\r\n" +
 		"  LISTGROUP [newsgroup [range]]\r\n" +
@@ -587,28 +596,102 @@ func cmdPost(s *Session, _ []string) error {
 		return s.conn.Reply(FailPostReject, "duplicate Message-ID")
 	}
 	wire := art.Wire()
+	if _, err := s.storeArticle(ctx, art, wire); errors.Is(err, store.ErrNoGroup) {
+		return s.conn.Reply(FailPostReject, "newsgroup does not exist")
+	} else if errors.Is(err, store.ErrDuplicate) {
+		return s.conn.Reply(FailPostReject, "duplicate Message-ID")
+	} else if err != nil {
+		return err
+	}
+	if err := s.conn.Reply(OKPost, "article received "+art.Get("Message-ID")); err != nil {
+		return err
+	}
+	s.offer(art, wire)
+	return nil
+}
+
+func cmdIHave(s *Session, args []string) error {
+	msgid := args[1]
+	if !article.ValidMessageID(msgid) {
+		return s.conn.Reply(ErrSyntax, "syntax error")
+	}
+	ctx := context.Background()
+	dup, err := s.store.HasMessageID(ctx, msgid)
+	if err != nil {
+		return s.conn.Reply(FailIHaveDefer, "try again later")
+	}
+	if dup {
+		return s.conn.Reply(FailIHaveRefuse, "article not wanted")
+	}
+	if err := s.conn.Reply(ContIHave, "send article to be transferred"); err != nil {
+		return err
+	}
+	raw, err := s.conn.ReadArticle(s.cfg.Limits.MaxArtSize)
+	if err != nil {
+		if IsTooLong(err) {
+			return s.conn.Reply(FailIHaveReject, "article too large")
+		}
+		return err
+	}
+	art, err := article.Parse(raw)
+	if err != nil {
+		return s.conn.Reply(FailIHaveReject, err.Error())
+	}
+	if err := article.InjectForIHave(art, article.InjectOpts{
+		Pathhost: s.cfg.Server.Pathhost,
+		Hostname: s.cfg.Server.Hostname,
+	}); err != nil {
+		return s.conn.Reply(FailIHaveReject, err.Error())
+	}
+	if !strings.EqualFold(art.Get("Message-ID"), msgid) {
+		return s.conn.Reply(FailIHaveReject, "Message-ID does not match")
+	}
+	dup, err = s.store.HasMessageID(ctx, msgid)
+	if err != nil {
+		return s.conn.Reply(FailIHaveDefer, "try again later")
+	}
+	if dup {
+		return s.conn.Reply(FailIHaveReject, "duplicate Message-ID")
+	}
+	wire := art.Wire()
+	if _, err := s.storeArticle(ctx, art, wire); errors.Is(err, store.ErrNoGroup) {
+		return s.conn.Reply(FailIHaveReject, "newsgroup does not exist")
+	} else if errors.Is(err, store.ErrDuplicate) {
+		return s.conn.Reply(FailIHaveReject, "duplicate Message-ID")
+	} else if err != nil {
+		return err
+	}
+	if err := s.conn.Reply(OKIHave, "article transferred "+msgid); err != nil {
+		return err
+	}
+	s.offer(art, wire)
+	return nil
+}
+
+func (s *Session) storeArticle(ctx context.Context, art *article.Article, wire []byte) (*store.PostResult, error) {
 	hdr, body, _ := strings.Cut(string(wire), "\r\n\r\n")
 	res, err := s.store.Post(ctx, hdr, body, art.Get("Message-ID"), art.Get("Subject"),
 		art.Get("From"), art.Get("Date"), art.Get("References"), s.cfg.Server.Hostname,
 		art.Bytes(), art.Lines(), art.Newsgroups())
-	if errors.Is(err, store.ErrNoGroup) {
-		return s.conn.Reply(FailPostReject, "newsgroup does not exist")
-	}
-	if errors.Is(err, store.ErrDuplicate) {
-		return s.conn.Reply(FailPostReject, "duplicate Message-ID")
-	}
 	if err != nil {
-		return err
+		return nil, err
 	}
-	art.Set("Xref", res.Xref)
 	if s.mbox != nil {
+		art.Set("Xref", res.Xref)
 		for g := range res.Numbers {
 			if _, _, err := s.mbox.Append(g, art); err != nil {
 				s.log.Printf("mbox append %s: %v", g, err)
 			}
 		}
 	}
-	return s.conn.Reply(OKPost, "article received "+art.Get("Message-ID"))
+	return res, nil
+}
+
+func (s *Session) offer(art *article.Article, wire []byte) {
+	if s.feeder == nil {
+		return
+	}
+	s.feeder.Offer(art.Get("Message-ID"), art.Get("Path"), art.Newsgroups(), wire)
 }
 
 func cmdNewnews(s *Session, args []string) error {

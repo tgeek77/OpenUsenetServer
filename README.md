@@ -6,7 +6,7 @@ You do **not** need `inn.conf`, `incoming.conf`, `newsfeeds`, or `ctlinnd`.
 
 ## Status
 
-Phase 1: RFC 3977 **reader** on port 119 (POST, OVER, groups, mbox archive). TLS, the admin wizard, INN peer-snippet import/export, streaming feeds, plugins, and Tor come later. See the design notes in-repo as they land.
+Phase 1: RFC 3977 **reader** on port 119 (POST, OVER, groups, mbox archive) plus RFC 3977 **IHAVE** transfer to YAML `peers`. TLS, the admin wizard, INN peer-snippet import/export, streaming feeds, plugins, and Tor come later. See the design notes in-repo as they land.
 
 ## Quick start (Docker Compose)
 
@@ -17,7 +17,7 @@ docker compose up --build -d
 printf 'CAPABILITIES\r\nQUIT\r\n' | nc -q 2 127.0.0.1 119
 ```
 
-Default seed group: `local.test`.
+Default seed group: `local.test`, plus the canonical ISC `active` / `newsgroups` files from https://ftp.isc.org/usenet/CONFIG/ (pulled on `openusenet migrate`).
 
 ## Quick start (local, no root)
 
@@ -56,7 +56,7 @@ Environment variables override the config file: `OPENUSENET_HOSTNAME`, `OPENUSEN
 
 ## Protocol (this release)
 
-Implements the RFC 3977 READER, POST, LIST, OVER, HDR, and NEWNEWS bundles, plus `XOVER`/`XHDR` aliases. `MODE READER` is accepted as a no-op. `IHAVE` and streaming `CHECK`/`TAKETHIS` are not advertised yet.
+Implements the RFC 3977 READER, POST, LIST, OVER, HDR, and NEWNEWS bundles, plus `XOVER`/`XHDR` aliases. `MODE READER` is accepted as a no-op. `IHAVE` is advertised and used to push newly accepted articles to `peers:` in the YAML config. Streaming `CHECK`/`TAKETHIS` is not advertised yet.
 
 ## Layout
 

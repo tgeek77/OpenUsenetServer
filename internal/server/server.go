@@ -9,23 +9,25 @@ import (
 
 	"github.com/openusenet/openusenet/internal/archive"
 	"github.com/openusenet/openusenet/internal/config"
+	"github.com/openusenet/openusenet/internal/feed"
 	"github.com/openusenet/openusenet/internal/nntp"
 	"github.com/openusenet/openusenet/internal/store"
 )
 
 type Server struct {
-	cfg  config.Config
-	st   store.Store
-	mbox *archive.MBox
-	ln   net.Listener
-	log  *log.Logger
+	cfg    config.Config
+	st     store.Store
+	mbox   *archive.MBox
+	ln     net.Listener
+	log    *log.Logger
+	feeder *feed.Feeder
 }
 
 func New(cfg config.Config, st store.Store, mbox *archive.MBox, lg *log.Logger) *Server {
 	if lg == nil {
 		lg = log.Default()
 	}
-	return &Server{cfg: cfg, st: st, mbox: mbox, log: lg}
+	return &Server{cfg: cfg, st: st, mbox: mbox, log: lg, feeder: feed.New(cfg, lg)}
 }
 
 func (s *Server) ListenAndServe(ctx context.Context) error {
@@ -52,7 +54,7 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 		}
 		go func(c net.Conn) {
 			nc := nntp.NewConn(c, s.cfg.Idle())
-			nntp.Serve(nc, s.st, s.mbox, s.cfg, s.log)
+			nntp.Serve(nc, s.st, s.mbox, s.cfg, s.log, s.feeder)
 		}(c)
 	}
 }

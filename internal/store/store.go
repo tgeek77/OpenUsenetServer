@@ -51,6 +51,8 @@ type PostResult struct {
 
 type Store interface {
 	EnsureGroup(ctx context.Context, name, desc, status string) error
+	EnsureGroups(ctx context.Context, groups []Group) error
+	CountGroups(ctx context.Context) (int, error)
 	ListGroups(ctx context.Context, wildmat string) ([]Group, error)
 	GetGroup(ctx context.Context, name string) (*Group, error)
 	ArticleNumbers(ctx context.Context, group string, lo, hi int64) ([]int64, error)

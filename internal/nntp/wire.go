@@ -127,6 +127,35 @@ func (c *Conn) ReadArticle(maxBytes int) ([]byte, error) {
 	}
 }
 
+// ReadReply reads one NNTP status line and returns its code and full line.
+func (c *Conn) ReadReply() (int, string, error) {
+	c.maxLine = MaxCommand
+	line, err := c.readLine()
+	if err != nil {
+		return 0, "", err
+	}
+	if len(line) < 3 {
+		return 0, line, fmt.Errorf("short reply %q", line)
+	}
+	var code int
+	for i := 0; i < 3; i++ {
+		if line[i] < '0' || line[i] > '9' {
+			return 0, line, fmt.Errorf("bad reply %q", line)
+		}
+		code = code*10 + int(line[i]-'0')
+	}
+	return code, line, nil
+}
+
+// ReplyRaw writes a command line (no status code) and flushes.
+func (c *Conn) ReplyRaw(line string) error {
+	c.bumpWrite()
+	if _, err := fmt.Fprintf(c.w, "%s\r\n", line); err != nil {
+		return err
+	}
+	return c.w.Flush()
+}
+
 func (c *Conn) Reply(code int, text string) error {
 	c.bumpWrite()
 	if text == "" {

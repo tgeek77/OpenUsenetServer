@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"strconv"
 	"strings"
@@ -17,7 +18,9 @@ type Config struct {
 	Storage   Storage   `yaml:"storage"`
 	Retention Retention `yaml:"retention"`
 	Limits    Limits    `yaml:"limits"`
-	Groups    []Group   `yaml:"groups"`
+	Groups       []Group      `yaml:"groups"`
+	Peers        []Peer       `yaml:"peers"`
+	GroupsSource GroupsSource `yaml:"groups_source"`
 }
 
 type Server struct {
@@ -51,6 +54,35 @@ type Group struct {
 	Status      string `yaml:"status"`
 }
 
+// Peer is an outbound IHAVE destination. This is not INN newsfeeds.
+type Peer struct {
+	Host string `yaml:"host"`
+	Port int    `yaml:"port"`
+}
+
+func (p Peer) Addr() string {
+	port := p.Port
+	if port <= 0 {
+		port = 119
+	}
+	return net.JoinHostPort(p.Host, strconv.Itoa(port))
+}
+
+// GroupsSource controls the canonical ISC newsgroup list.
+type GroupsSource struct {
+	ISCURL   string `yaml:"isc_url"`
+	FetchISC *bool  `yaml:"fetch_isc"`
+}
+
+const DefaultISCURL = "https://ftp.isc.org/usenet/CONFIG"
+
+func (c Config) ShouldFetchISC() bool {
+	if c.GroupsSource.FetchISC == nil {
+		return true
+	}
+	return *c.GroupsSource.FetchISC
+}
+
 func Defaults() Config {
 	return Config{
 		Server: Server{
@@ -63,7 +95,10 @@ func Defaults() Config {
 			MBoxDir:  "./archive",
 		},
 		Retention: Retention{LiveDays: 30, HistoryDays: 60},
-		Limits:    Limits{MaxArtSize: 5_000_000, IdleSeconds: 180},
+		Limits: Limits{MaxArtSize: 5_000_000, IdleSeconds: 180},
+		GroupsSource: GroupsSource{
+			ISCURL: DefaultISCURL,
+		},
 		Groups: []Group{{
 			Name:        "local.test",
 			Description: "Local test group",
@@ -110,6 +145,21 @@ func Load(path string) (Config, error) {
 			cfg.Groups[i].Status = "y"
 		}
 	}
+	var peers []Peer
+	for _, p := range cfg.Peers {
+		p.Host = strings.TrimSpace(p.Host)
+		if p.Host == "" {
+			continue
+		}
+		if p.Port <= 0 {
+			p.Port = 119
+		}
+		peers = append(peers, p)
+	}
+	cfg.Peers = peers
+	if strings.TrimSpace(cfg.GroupsSource.ISCURL) == "" {
+		cfg.GroupsSource.ISCURL = DefaultISCURL
+	}
 	return cfg, nil
 }
 
@@ -131,6 +181,13 @@ func applyEnv(cfg *Config) {
 	}
 	if v := os.Getenv("OPENUSENET_MBOX_DIR"); v != "" {
 		cfg.Storage.MBoxDir = v
+	}
+	if v := os.Getenv("OPENUSENET_ISC_URL"); v != "" {
+		cfg.GroupsSource.ISCURL = v
+	}
+	if v := os.Getenv("OPENUSENET_FETCH_ISC"); v != "" {
+		on := v == "1" || strings.EqualFold(v, "true") || strings.EqualFold(v, "yes")
+		cfg.GroupsSource.FetchISC = &on
 	}
 	if v := os.Getenv("OPENUSENET_MAX_ART_SIZE"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {

@@ -11,6 +11,7 @@ import (
 
 	"github.com/openusenet/openusenet/internal/archive"
 	"github.com/openusenet/openusenet/internal/config"
+	"github.com/openusenet/openusenet/internal/isc"
 	"github.com/openusenet/openusenet/internal/nntp"
 	"github.com/openusenet/openusenet/internal/server"
 	"github.com/openusenet/openusenet/internal/store"
@@ -101,7 +102,7 @@ func cmdServe(args []string) error {
 		return fmt.Errorf("%v\n  openusenet serve --postgres postgres://USER:PASS@HOST:5432/DB?sslmode=disable", err)
 	}
 	defer st.Close()
-	if err := seed(ctx, st, cfg); err != nil {
+	if err := seed(ctx, st, cfg, false); err != nil {
 		return err
 	}
 	mb := archive.New(cfg.Storage.MBoxDir)
@@ -140,24 +141,29 @@ func cmdMigrate(args []string) error {
 	if *pg != "" {
 		cfg.Storage.Postgres = *pg
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 	st, err := store.OpenPostgres(ctx, cfg.Storage.Postgres)
 	if err != nil {
 		return err
 	}
 	defer st.Close()
-	if err := seed(ctx, st, cfg); err != nil {
+	if err := seed(ctx, st, cfg, true); err != nil {
 		return err
 	}
-	fmt.Println("ok schema and seed groups")
+	n, err := st.CountGroups(ctx)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("ok schema and %d groups\n", n)
 	return nil
 }
 
 const migrateHelp = `Usage:
   openusenet migrate [options]
 
-Apply the PostgreSQL schema (idempotent) and seed configured groups.
+Apply the PostgreSQL schema (idempotent), pull the ISC active/newsgroups
+list, and seed any extra groups from config.yml.
 
 Options:
   --config FILE     YAML config
@@ -165,7 +171,7 @@ Options:
 
 Examples:
   openusenet migrate --config config.yml
-  openusenet migrate --postgres postgres://openusenet:openusenet@127.0.0.1:5432/openusenet?sslmode=disable
+  openusenet migrate --postgres postgres://openusenet:openusenet@127.0.0.1:5432/DB?sslmode=disable
 `
 
 func cmdHealth(args []string) error {
@@ -194,7 +200,23 @@ Examples:
   openusenet healthcheck --addr 127.0.0.1:1119
 `
 
-func seed(ctx context.Context, st store.Store, cfg config.Config) error {
+func seed(ctx context.Context, st store.Store, cfg config.Config, alwaysISC bool) error {
+	if cfg.ShouldFetchISC() {
+		n, err := st.CountGroups(ctx)
+		if err != nil {
+			return err
+		}
+		if alwaysISC || n == 0 {
+			groups, err := isc.Fetch(ctx, cfg.GroupsSource.ISCURL)
+			if err != nil {
+				return fmt.Errorf("isc newsgroups: %w", err)
+			}
+			if err := st.EnsureGroups(ctx, groups); err != nil {
+				return fmt.Errorf("isc newsgroups store: %w", err)
+			}
+			log.Printf("loaded %d groups from ISC", len(groups))
+		}
+	}
 	for _, g := range cfg.Groups {
 		if err := st.EnsureGroup(ctx, g.Name, g.Description, g.Status); err != nil {
 			return fmt.Errorf("seed group %s: %w", g.Name, err)

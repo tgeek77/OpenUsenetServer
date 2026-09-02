@@ -234,13 +234,70 @@ func InjectForPost(a *Article, opt InjectOpts) error {
 	if !a.Has("Injection-Info") {
 		a.Set("Injection-Info", fmt.Sprintf("%s; posting-account=\"openusenet\"", opt.Hostname))
 	}
-	// POST must not carry a client-supplied Xref.
+	stripXref(a)
+	return nil
+}
+
+// InjectForIHave validates a transferred article and prepends Path.
+// It does not mint a Message-ID or Injection-Info (unlike POST).
+func InjectForIHave(a *Article, opt InjectOpts) error {
+	if strings.TrimSpace(a.Get("From")) == "" {
+		return fmt.Errorf("missing From")
+	}
+	if len(a.Newsgroups()) == 0 {
+		return fmt.Errorf("missing Newsgroups")
+	}
+	if strings.TrimSpace(a.Get("Subject")) == "" {
+		return fmt.Errorf("missing Subject")
+	}
+	for _, g := range a.Newsgroups() {
+		if !ValidGroupName(g) {
+			return fmt.Errorf("bad newsgroup name %q", g)
+		}
+	}
+	msgid := strings.TrimSpace(a.Get("Message-ID"))
+	if msgid == "" {
+		return fmt.Errorf("missing Message-ID")
+	}
+	if !ValidMessageID(msgid) {
+		return fmt.Errorf("bad Message-ID")
+	}
+	a.Set("Message-ID", msgid)
+	if strings.TrimSpace(a.Get("Date")) == "" {
+		return fmt.Errorf("missing Date")
+	}
+	if PathContains(a.Get("Path"), opt.Pathhost) {
+		return fmt.Errorf("path loop")
+	}
+	if !a.Has("Path") {
+		a.Set("Path", opt.Pathhost+"!not-for-mail")
+	} else {
+		a.Set("Path", opt.Pathhost+"!"+a.Get("Path"))
+	}
+	stripXref(a)
+	return nil
+}
+
+func stripXref(a *Article) {
 	for k := range a.Headers {
 		if strings.EqualFold(k, "Xref") {
 			delete(a.Headers, k)
 		}
 	}
-	return nil
+}
+
+// PathContains reports whether token appears as a bang-separated Path hop.
+func PathContains(path, token string) bool {
+	token = strings.TrimSpace(token)
+	if token == "" || path == "" {
+		return false
+	}
+	for _, hop := range strings.Split(path, "!") {
+		if strings.EqualFold(hop, token) {
+			return true
+		}
+	}
+	return false
 }
 
 func ValidGroupName(g string) bool {

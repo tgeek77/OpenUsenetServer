@@ -25,7 +25,7 @@ func startTestServer(t *testing.T) (net.Conn, *store.Memory) {
 	cfg.Server.Hostname = "news.test"
 	cfg.Server.Pathhost = "news.test"
 	cfg.Limits.IdleSeconds = 30
-	go nntp.Serve(nntp.NewConn(b, 30*time.Second), st, nil, cfg, nil)
+	go nntp.Serve(nntp.NewConn(b, 30*time.Second), st, nil, cfg, nil, nil)
 	t.Cleanup(func() { _ = a.Close() })
 	return a, st
 }
@@ -74,8 +74,11 @@ func TestGreetingAndCapabilities(t *testing.T) {
 			t.Fatalf("capabilities missing %q in %q", want, joined)
 		}
 	}
-	if strings.Contains(joined, "IHAVE") || strings.Contains(joined, "STREAMING") {
-		t.Fatalf("should not advertise IHAVE/STREAMING yet: %q", joined)
+	if strings.Contains(joined, "STREAMING") {
+		t.Fatalf("should not advertise STREAMING yet: %q", joined)
+	}
+	if !strings.Contains(joined, "IHAVE") {
+		t.Fatalf("should advertise IHAVE: %q", joined)
 	}
 	_, _ = c.Write([]byte("QUIT\r\n"))
 	if q := readLine(t, r); !strings.HasPrefix(q, "205 ") {
@@ -242,3 +245,65 @@ func TestInjectRequiresFrom(t *testing.T) {
 		t.Fatal("expected missing From")
 	}
 }
+
+func TestIHaveAcceptAndDuplicate(t *testing.T) {
+	c, _ := startTestServer(t)
+	r := bufio.NewReader(c)
+	_ = readLine(t, r)
+	msgid := "<ihave-1@news.test>"
+	_, _ = c.Write([]byte("IHAVE " + msgid + "\r\n"))
+	if l := readLine(t, r); !strings.HasPrefix(l, "335 ") {
+		t.Fatalf("ihave cont %q", l)
+	}
+	art := "Path: other!not-for-mail\r\n" +
+		"From: a@b.c\r\n" +
+		"Newsgroups: local.test\r\n" +
+		"Subject: ihave\r\n" +
+		"Date: Mon, 01 Jan 2024 00:00:00 +0000\r\n" +
+		"Message-ID: " + msgid + "\r\n" +
+		"\r\n" +
+		"body\r\n" +
+		".\r\n"
+	_, _ = c.Write([]byte(art))
+	if l := readLine(t, r); !strings.HasPrefix(l, "235 ") {
+		t.Fatalf("ihave ok %q", l)
+	}
+	_, _ = c.Write([]byte("ARTICLE " + msgid + "\r\n"))
+	first, lines := readBlock(t, r)
+	if !strings.HasPrefix(first, "220 ") {
+		t.Fatalf("article %q", first)
+	}
+	blob := strings.Join(lines, "\n")
+	if !strings.Contains(blob, "Path: news.test!other!not-for-mail") {
+		t.Fatalf("path not prepended: %q", blob)
+	}
+	_, _ = c.Write([]byte("IHAVE " + msgid + "\r\n"))
+	if l := readLine(t, r); !strings.HasPrefix(l, "435 ") {
+		t.Fatalf("ihave dup %q", l)
+	}
+}
+
+func TestIHavePathLoop(t *testing.T) {
+	c, _ := startTestServer(t)
+	r := bufio.NewReader(c)
+	_ = readLine(t, r)
+	msgid := "<loop-1@news.test>"
+	_, _ = c.Write([]byte("IHAVE " + msgid + "\r\n"))
+	if l := readLine(t, r); !strings.HasPrefix(l, "335 ") {
+		t.Fatalf("ihave cont %q", l)
+	}
+	art := "Path: news.test!other!not-for-mail\r\n" +
+		"From: a@b.c\r\n" +
+		"Newsgroups: local.test\r\n" +
+		"Subject: loop\r\n" +
+		"Date: Mon, 01 Jan 2024 00:00:00 +0000\r\n" +
+		"Message-ID: " + msgid + "\r\n" +
+		"\r\n" +
+		"x\r\n" +
+		".\r\n"
+	_, _ = c.Write([]byte(art))
+	if l := readLine(t, r); !strings.HasPrefix(l, "437 ") {
+		t.Fatalf("want path-loop reject, got %q", l)
+	}
+}
+
