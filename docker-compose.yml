@@ -29,8 +29,11 @@ services:
       OPENUSENET_HTTP: ${OPENUSENET_HTTP:-:8080}
       OPENUSENET_POSTGRES: ${OPENUSENET_POSTGRES:-postgres://openusenet:openusenet@postgres:5432/openusenet?sslmode=disable}
       OPENUSENET_MBOX_DIR: ${OPENUSENET_MBOX_DIR:-/var/spool/openusenet/archive}
+      OPENUSENET_EXPORT_DIR: ${OPENUSENET_EXPORT_DIR:-/var/spool/openusenet/exports}
+      OPENUSENET_BOOTSTRAP_ADMIN: ${OPENUSENET_BOOTSTRAP_ADMIN:-}
     volumes:
       - archive:/var/spool/openusenet/archive
+      - exports:/var/spool/openusenet/exports
     cap_add:
       - NET_BIND_SERVICE
     healthcheck:
@@ -43,3 +46,4 @@ services:
 volumes:
   pgdata:
   archive:
+  exports:

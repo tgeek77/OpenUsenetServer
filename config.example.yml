@@ -9,12 +9,19 @@ server:
 
 listen:
   nntp: ":1119" # use :119 in Docker; 1119 avoids root on a laptop
-  http: ":8080" # admin portal; set to "-" to disable. No authentication yet.
+  http: ":8080" # admin portal (login required after first admin exists)
+  # nntp_tls: ":563"
+  # http_tls: ":8443"
+
+# tls:
+#   cert_file: /etc/openusenet/fullchain.pem
+#   key_file: /etc/openusenet/privkey.pem
 
 storage:
   postgres: postgres://openusenet:openusenet@127.0.0.1:5432/openusenet?sslmode=disable
-  mbox_dir: ./archive
+  mbox_dir: ./archive # live append-on-POST spool (not IA exports)
 
+# Not enforced: live articles are kept indefinitely. Use archive exports for snapshots.
 retention:
   live_days: 30
   history_days: 60
@@ -35,9 +42,22 @@ groups_source:
   isc_url: https://ftp.isc.org/usenet/CONFIG
   # fetch_isc: false   # set to skip the ISC pull (tests / airgap)
 
-# Outbound IHAVE peers (optional). Hostnames must resolve on this machine.
+# YAML peers seed the DB only when the peers table is empty. Prefer the admin UI afterward.
 # peers:
 #   - host: news-b
 #     port: 119
 #   - host: news-c
 #     port: 119
+
+# Who may IHAVE to us. Empty = allow all remotes.
+# inbound:
+#   allow:
+#     - 192.168.1.0/24
+#     - news-b
+
+# Snapshot exports (mbox.gz). Never deletes live articles.
+archive:
+  export_dir: ./exports
+  # schedule: weekly   # daily | weekly | empty to disable
+  groups: all
+  retain_generations: 4

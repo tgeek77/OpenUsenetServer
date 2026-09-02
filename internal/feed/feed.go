@@ -1,6 +1,7 @@
 package feed
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net"
@@ -11,11 +12,18 @@ import (
 	"github.com/openusenet/openusenet/internal/article"
 	"github.com/openusenet/openusenet/internal/config"
 	"github.com/openusenet/openusenet/internal/nntp"
+	"github.com/openusenet/openusenet/internal/store"
 )
+
+// PeerSource supplies outbound IHAVE destinations (usually the DB).
+type PeerSource interface {
+	ListEnabledPeers(ctx context.Context) ([]store.Peer, error)
+}
 
 // Feeder offers newly accepted articles to configured peers via IHAVE.
 type Feeder struct {
 	cfg     config.Config
+	peers   PeerSource
 	log     *log.Logger
 	timeout time.Duration
 	offered atomic.Int64
@@ -24,20 +32,32 @@ type Feeder struct {
 	last    atomic.Value // string
 }
 
-func New(cfg config.Config, lg *log.Logger) *Feeder {
+func New(cfg config.Config, peers PeerSource, lg *log.Logger) *Feeder {
 	if lg == nil {
 		lg = log.Default()
 	}
-	return &Feeder{cfg: cfg, log: lg, timeout: 15 * time.Second}
+	return &Feeder{cfg: cfg, peers: peers, log: lg, timeout: 15 * time.Second}
 }
 
 // Offer sends the article to peers whose host is not already in Path.
 // It returns immediately; transfers run in the background.
 func (f *Feeder) Offer(msgid, path string, groups []string, wire []byte) {
-	if f == nil || len(f.cfg.Peers) == 0 || msgid == "" || len(wire) == 0 {
+	if f == nil || msgid == "" || len(wire) == 0 {
 		return
 	}
-	for _, p := range f.cfg.Peers {
+	var list []store.Peer
+	if f.peers != nil {
+		var err error
+		list, err = f.peers.ListEnabledPeers(context.Background())
+		if err != nil {
+			f.log.Printf("feed list peers: %v", err)
+			return
+		}
+	}
+	if len(list) == 0 {
+		return
+	}
+	for _, p := range list {
 		p := p
 		if skipPeer(f.cfg, p, path) {
 			continue
@@ -56,7 +76,7 @@ func (f *Feeder) Offer(msgid, path string, groups []string, wire []byte) {
 	_ = groups
 }
 
-func skipPeer(cfg config.Config, p config.Peer, path string) bool {
+func skipPeer(cfg config.Config, p store.Peer, path string) bool {
 	host := strings.TrimSpace(p.Host)
 	if host == "" {
 		return true
@@ -73,7 +93,7 @@ func skipPeer(cfg config.Config, p config.Peer, path string) bool {
 	return false
 }
 
-func (f *Feeder) ihave(p config.Peer, msgid string, wire []byte) error {
+func (f *Feeder) ihave(p store.Peer, msgid string, wire []byte) error {
 	d := net.Dialer{Timeout: f.timeout}
 	c, err := d.Dial("tcp", p.Addr())
 	if err != nil {

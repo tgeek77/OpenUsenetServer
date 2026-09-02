@@ -6,19 +6,28 @@ You do **not** need `inn.conf`, `incoming.conf`, `newsfeeds`, or `ctlinnd`.
 
 ## Status
 
-Phase 1: RFC 3977 **reader** on port 119 (POST, OVER, groups, mbox archive) plus RFC 3977 **IHAVE** transfer to YAML `peers`, and an unauthenticated **admin portal** on port 8080. TLS, AUTH, INN peer-snippet import/export, streaming feeds, plugins, and Tor come later.
+Phase 1+: RFC 3977 **reader** on port 119 (POST, OVER, groups, live mbox spool) plus RFC 3977 **IHAVE** to DB-backed peers, **AUTHINFO USER/PASS**, and an **admin portal** (login after first admin). Optional TLS for NNTP/HTTP. MFA and streaming feeds come later.
+
+Live articles are kept indefinitely. Use [archive exports](docs/backup-and-archive.md) (`*.mbox.gz`) for Internet Archive / offsite snapshots.
 
 ## Quick start (Docker Compose)
 
 ```bash
 cp .env.example .env
 # set OPENUSENET_HOSTNAME to your FQDN when you have one
+# optional first admin: OPENUSENET_BOOTSTRAP_ADMIN=admin:changeme
 docker compose up --build -d
 printf 'CAPABILITIES\r\nQUIT\r\n' | nc -q 2 127.0.0.1 119
-# admin portal: http://127.0.0.1:8080/  (no authentication)
+# admin portal: http://127.0.0.1:8080/
 ```
 
 Default seed group: `local.test`, plus the canonical ISC `active` / `newsgroups` files from https://ftp.isc.org/usenet/CONFIG/ (pulled on `openusenet migrate`).
+
+## Auth
+
+- Anonymous NNTP **read** is allowed.
+- Once any user exists, **POST** requires `AUTHINFO USER` / `AUTHINFO PASS` with `can_post` or `admin`.
+- Admin portal requires login. First admin: setup page, `openusenet user add --admin ...`, or `OPENUSENET_BOOTSTRAP_ADMIN=user:pass`.
 
 ## Quick start (local, no root)
 
@@ -27,37 +36,23 @@ Postgres must be reachable. Then:
 ```bash
 cp config.example.yml config.yml
 go run ./cmd/openusenet migrate --config config.yml
+go run ./cmd/openusenet user add --admin --username admin --password secret --config config.yml
 go run ./cmd/openusenet serve --config config.yml
-# listens on :1119 by default in the example config
-```
-
-```bash
-printf 'CAPABILITIES\r\nQUIT\r\n' | nc 127.0.0.1 1119
 ```
 
 ## CLI
 
 ```text
-openusenet --help
-openusenet serve --help
-openusenet migrate --help
-openusenet healthcheck --help
+openusenet serve|migrate|user|archive|healthcheck|version
 ```
 
-Examples:
-
-```bash
-openusenet serve --config config.yml
-openusenet serve --listen :1119 --postgres postgres://openusenet:openusenet@127.0.0.1:5432/openusenet?sslmode=disable
-openusenet migrate --config config.yml
-openusenet healthcheck --addr 127.0.0.1:119
-```
-
-Environment variables override the config file: `OPENUSENET_HOSTNAME`, `OPENUSENET_ORGANIZATION`, `OPENUSENET_LISTEN`, `OPENUSENET_HTTP`, `OPENUSENET_POSTGRES`, `OPENUSENET_MBOX_DIR`. The admin portal is unauthenticated; bind it to localhost or disable with `OPENUSENET_HTTP=-` if the host is reachable from untrusted networks.
+Environment overrides include `OPENUSENET_HOSTNAME`, `OPENUSENET_LISTEN`, `OPENUSENET_HTTP`, `OPENUSENET_HTTP_TLS`, `OPENUSENET_NNTP_TLS`, `OPENUSENET_TLS_CERT`, `OPENUSENET_TLS_KEY`, `OPENUSENET_POSTGRES`, `OPENUSENET_MBOX_DIR`, `OPENUSENET_EXPORT_DIR`, `OPENUSENET_INBOUND_ALLOW`, `OPENUSENET_BOOTSTRAP_ADMIN`.
 
 ## Protocol (this release)
 
-Implements the RFC 3977 READER, POST, LIST, OVER, HDR, and NEWNEWS bundles, plus `XOVER`/`XHDR` aliases. `MODE READER` is accepted as a no-op. `IHAVE` is advertised and used to push newly accepted articles to `peers:` in the YAML config. Streaming `CHECK`/`TAKETHIS` is not advertised yet.
+Implements the RFC 3977 READER, POST, LIST, OVER, HDR, and NEWNEWS bundles, plus `XOVER`/`XHDR` aliases. `MODE READER` is accepted as a no-op. `IHAVE` is advertised. `AUTHINFO USER` is advertised. Streaming `CHECK`/`TAKETHIS` is not advertised yet.
+
+Inbound IHAVE can be limited with `inbound.allow` (hostnames / IPs / CIDRs). Empty allow list = all remotes.
 
 ## Layout
 
@@ -66,8 +61,9 @@ Implements the RFC 3977 READER, POST, LIST, OVER, HDR, and NEWNEWS bundles, plus
 | `cmd/openusenet` | CLI |
 | `internal/nntp` | RFC 3977 session |
 | `internal/store` | PostgreSQL (and in-memory tests) |
-| `internal/article` | RFC 5536 parse / POST injection |
-| `internal/archive` | mboxrd per newsgroup |
+| `internal/admin` | Admin portal |
+| `internal/archive` | Live mbox spool + mbox.gz exports |
+| `docs/backup-and-archive.md` | Backup / IA notes |
 | `config.example.yml` | Local config |
 
 License: GPL-3.0-or-later.

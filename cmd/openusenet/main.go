@@ -6,10 +6,12 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/openusenet/openusenet/internal/archive"
+	"github.com/openusenet/openusenet/internal/auth"
 	"github.com/openusenet/openusenet/internal/config"
 	"github.com/openusenet/openusenet/internal/isc"
 	"github.com/openusenet/openusenet/internal/nntp"
@@ -38,6 +40,10 @@ func run(args []string) error {
 		return cmdMigrate(args[1:])
 	case "healthcheck":
 		return cmdHealth(args[1:])
+	case "user":
+		return cmdUser(args[1:])
+	case "archive":
+		return cmdArchive(args[1:])
 	case "version":
 		fmt.Printf("%s %s\n", nntp.Software, nntp.Version)
 		return nil
@@ -52,16 +58,18 @@ Usage:
   openusenet <command> [options]
 
 Commands:
-  serve         Run the NNTP server
+  serve         Run the NNTP server and admin portal
   migrate       Apply PostgreSQL schema and seed groups
+  user          Manage users (add first admin, etc.)
+  archive       Export mbox.gz snapshots (never deletes live articles)
   healthcheck   Dial NNTP and check the greeting (for Docker HEALTHCHECK)
   version       Print version
 
 Examples:
   openusenet serve --config config.yml
-  openusenet serve --listen :1119 --postgres postgres://openusenet:openusenet@127.0.0.1:5432/openusenet?sslmode=disable
-  openusenet migrate --config config.yml
-  openusenet healthcheck --addr 127.0.0.1:119
+  openusenet user add --admin --username admin --password secret --config config.yml
+  openusenet archive export --groups 'misc.test*' --config config.yml
+  OPENUSENET_BOOTSTRAP_ADMIN=admin:secret openusenet serve --config config.yml
 
 Use openusenet <command> --help for command options.
 `
@@ -71,7 +79,7 @@ func cmdServe(args []string) error {
 	cfgPath := fs.String("config", "", "Path to config.yml")
 	listen := fs.String("listen", "", "NNTP listen address (default :119 or config)")
 	pg := fs.String("postgres", "", "PostgreSQL URL")
-	mbox := fs.String("mbox-dir", "", "Directory for per-group mbox archives")
+	mbox := fs.String("mbox-dir", "", "Directory for per-group live mbox spool")
 	hostname := fs.String("hostname", "", "Server hostname / Path token")
 	httpAddr := fs.String("http", "", "Admin HTTP listen address (default :8080; - to disable)")
 	if err := parseHelp(fs, args, serveHelp); err != nil {
@@ -118,13 +126,16 @@ const serveHelp = `Usage:
   openusenet serve [options]
 
 Run the NNTP reader (RFC 3977) on --listen and the admin portal on --http.
+Anonymous NNTP read is allowed. POST requires AUTHINFO once any user exists.
+Create the first admin with: openusenet user add --admin ...
+or OPENUSENET_BOOTSTRAP_ADMIN=user:pass
 
 Options:
   --config FILE       YAML config (env vars override)
   --listen ADDR       NNTP bind address (default :119)
   --http ADDR         Admin HTTP bind (default :8080; use - to disable)
   --postgres URL      PostgreSQL connection URL
-  --mbox-dir DIR      Per-newsgroup mbox archive directory
+  --mbox-dir DIR      Live per-newsgroup mbox spool directory
   --hostname NAME     Path / Message-ID hostname
 
 Examples:
@@ -156,6 +167,12 @@ func cmdMigrate(args []string) error {
 	if err := seed(ctx, st, cfg, true); err != nil {
 		return err
 	}
+	if err := server.SeedPeers(ctx, st, cfg); err != nil {
+		return err
+	}
+	if err := server.BootstrapAdmin(ctx, st, log.Default()); err != nil {
+		return err
+	}
 	n, err := st.CountGroups(ctx)
 	if err != nil {
 		return err
@@ -176,7 +193,140 @@ Options:
 
 Examples:
   openusenet migrate --config config.yml
-  openusenet migrate --postgres postgres://openusenet:openusenet@127.0.0.1:5432/DB?sslmode=disable
+`
+
+func cmdUser(args []string) error {
+	if len(args) == 0 || args[0] == "-h" || args[0] == "--help" {
+		fmt.Print(userHelp)
+		return nil
+	}
+	if args[0] != "add" {
+		return fmt.Errorf("unknown user subcommand %q\n  openusenet user --help", args[0])
+	}
+	fs := newFlagSet("user add")
+	cfgPath := fs.String("config", "", "Path to config.yml")
+	pg := fs.String("postgres", "", "PostgreSQL URL")
+	username := fs.String("username", "", "Username")
+	password := fs.String("password", "", "Password")
+	adminFlag := fs.String("admin", "", "Set to 1/true to create an admin")
+	if err := parseHelp(fs, args[1:], userHelp); err != nil {
+		return err
+	}
+	// also accept bare --admin with no value via presence in raw args
+	isAdmin := isTruthy(*adminFlag)
+	for _, a := range args[1:] {
+		if a == "--admin" {
+			isAdmin = true
+		}
+	}
+	if *username == "" || *password == "" {
+		return fmt.Errorf(" --username and --password are required\n  openusenet user --help")
+	}
+	cfg, err := config.Load(*cfgPath)
+	if err != nil {
+		return err
+	}
+	if *pg != "" {
+		cfg.Storage.Postgres = *pg
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	st, err := store.OpenPostgres(ctx, cfg.Storage.Postgres)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+	hash, err := auth.HashPassword(*password)
+	if err != nil {
+		return err
+	}
+	role := store.RoleUser
+	if isAdmin {
+		role = store.RoleAdmin
+	}
+	u, err := st.CreateUser(ctx, store.User{
+		Username: *username, PasswordHash: hash, Role: role, CanPost: true,
+	})
+	if err != nil {
+		return err
+	}
+	fmt.Printf("ok created %s (%s)\n", u.Username, u.Role)
+	return nil
+}
+
+const userHelp = `Usage:
+  openusenet user add --username NAME --password PASS [--admin] [options]
+
+Create a user for NNTP AUTHINFO and (if --admin) the web portal.
+
+Options:
+  --config FILE     YAML config
+  --postgres URL    PostgreSQL connection URL
+  --username NAME   Login name
+  --password PASS   Password
+  --admin           Create an admin account
+
+Examples:
+  openusenet user add --admin --username admin --password secret --config config.yml
+`
+
+func cmdArchive(args []string) error {
+	if len(args) == 0 || args[0] == "-h" || args[0] == "--help" {
+		fmt.Print(archiveHelp)
+		return nil
+	}
+	if args[0] != "export" {
+		return fmt.Errorf("unknown archive subcommand %q\n  openusenet archive --help", args[0])
+	}
+	fs := newFlagSet("archive export")
+	cfgPath := fs.String("config", "", "Path to config.yml")
+	pg := fs.String("postgres", "", "PostgreSQL URL")
+	groups := fs.String("groups", "all", "all or wildmat")
+	dir := fs.String("dir", "", "Export root directory")
+	if err := parseHelp(fs, args[1:], archiveHelp); err != nil {
+		return err
+	}
+	cfg, err := config.Load(*cfgPath)
+	if err != nil {
+		return err
+	}
+	if *pg != "" {
+		cfg.Storage.Postgres = *pg
+	}
+	if *dir != "" {
+		cfg.Archive.ExportDir = *dir
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	defer cancel()
+	st, err := store.OpenPostgres(ctx, cfg.Storage.Postgres)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+	res, err := archive.Export(ctx, st, cfg.Archive.ExportDir, *groups)
+	if err != nil {
+		return err
+	}
+	_ = archive.PruneOldExports(cfg.Archive.ExportDir, cfg.Archive.RetainGens)
+	fmt.Printf("ok exported %d groups (%d articles) to %s\n", res.Groups, res.Articles, res.Dir)
+	return nil
+}
+
+const archiveHelp = `Usage:
+  openusenet archive export [--groups all|wildmat] [options]
+
+Write per-newsgroup mboxrd files compressed with gzip. Does not delete
+live articles from PostgreSQL.
+
+Options:
+  --config FILE     YAML config
+  --postgres URL    PostgreSQL connection URL
+  --groups SEL      all (default) or wildmat such as misc.test*
+  --dir DIR         Export root (default archive.export_dir)
+
+Examples:
+  openusenet archive export --groups all --config config.yml
+  openusenet archive export --groups 'misc.test*' --dir ./exports
 `
 
 func cmdHealth(args []string) error {
@@ -199,10 +349,6 @@ Dial NNTP and check for a 200/201 greeting. Exit 0 on success.
 
 Options:
   --addr HOST:PORT   Address (default 127.0.0.1:119)
-
-Examples:
-  openusenet healthcheck --addr 127.0.0.1:119
-  openusenet healthcheck --addr 127.0.0.1:1119
 `
 
 func seed(ctx context.Context, st store.Store, cfg config.Config, alwaysISC bool) error {
@@ -230,10 +376,14 @@ func seed(ctx context.Context, st store.Store, cfg config.Config, alwaysISC bool
 	return nil
 }
 
+func isTruthy(v string) bool {
+	v = strings.TrimSpace(strings.ToLower(v))
+	return v == "1" || v == "true" || v == "yes" || v == "admin"
+}
+
 type flagSet struct {
 	name string
 	args map[string]*string
-	raw  []string
 }
 
 func newFlagSet(name string) *flagSet {
@@ -252,6 +402,13 @@ func parseHelp(f *flagSet, args []string, help string) error {
 		if a == "-h" || a == "--help" {
 			fmt.Print(help)
 			os.Exit(0)
+		}
+		if a == "--admin" {
+			// boolean flag with optional value handled by caller
+			if p, ok := f.args["admin"]; ok && (i+1 >= len(args) || strings.HasPrefix(args[i+1], "-")) {
+				*p = "1"
+				continue
+			}
 		}
 		if len(a) >= 2 && a[:2] == "--" {
 			key := a[2:]

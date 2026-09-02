@@ -12,21 +12,26 @@ import (
 
 	"github.com/openusenet/openusenet/internal/archive"
 	"github.com/openusenet/openusenet/internal/article"
+	"github.com/openusenet/openusenet/internal/auth"
 	"github.com/openusenet/openusenet/internal/config"
+	"github.com/openusenet/openusenet/internal/inbound"
 	"github.com/openusenet/openusenet/internal/store"
 	"github.com/openusenet/openusenet/internal/wildmat"
 )
 
 type Session struct {
-	conn   *Conn
-	store  store.Store
-	mbox   *archive.MBox
-	cfg    config.Config
-	group  *store.Group
-	cur    int64
-	closed bool
-	log    *log.Logger
-	feeder Feeder
+	conn     *Conn
+	store    store.Store
+	mbox     *archive.MBox
+	cfg      config.Config
+	group    *store.Group
+	cur      int64
+	closed   bool
+	log      *log.Logger
+	feeder   Feeder
+	authUser string
+	authOK   bool
+	pending  string // AUTHINFO USER pending username
 }
 
 // Feeder is an outbound IHAVE client. Tests pass nil.
@@ -108,6 +113,7 @@ var commands = map[string]cmd{
 	"XHDR":         {2, 3, cmdHdr},
 	"POST":         {1, 1, cmdPost},
 	"IHAVE":        {2, 2, cmdIHave},
+	"AUTHINFO":     {2, 3, cmdAuthinfo},
 	"NEWNEWS":      {4, 5, cmdNewnews},
 	"NEWGROUPS":    {3, 4, cmdNewgroups},
 	"SLAVE":        {1, 1, cmdSlave},
@@ -126,6 +132,7 @@ func cmdCapabilities(s *Session, _ []string) error {
 		"HDR",
 		"OVER MSGID",
 		"IHAVE",
+		"AUTHINFO USER",
 		"LIST ACTIVE NEWSGROUPS ACTIVE.TIMES OVERVIEW.FMT HEADERS",
 		"IMPLEMENTATION " + Software + " " + Version,
 	}
@@ -146,6 +153,8 @@ func cmdHelp(s *Session, _ []string) error {
 		"  HDR header [range|<message-id>]\r\n" +
 		"  HEAD [number|<message-id>]\r\n" +
 		"  HELP\r\n" +
+		"  AUTHINFO USER name\r\n" +
+		"  AUTHINFO PASS password\r\n" +
 		"  IHAVE <message-id>\r\n" +
 		"  LAST\r\n" +
 		"  LIST [ACTIVE [wildmat]|NEWSGROUPS [wildmat]|ACTIVE.TIMES [wildmat]|OVERVIEW.FMT|HEADERS]\r\n" +
@@ -565,7 +574,66 @@ func hdrFromStored(header string, a *store.StoredArticle) string {
 	}
 }
 
+func cmdAuthinfo(s *Session, args []string) error {
+	sub := strings.ToUpper(args[1])
+	switch sub {
+	case "USER":
+		if len(args) != 3 {
+			return s.conn.Reply(ErrSyntax, "syntax error")
+		}
+		s.pending = args[2]
+		s.authOK = false
+		s.authUser = ""
+		return s.conn.Reply(ContAuthPass, "PASSWORD required")
+	case "PASS":
+		if len(args) != 3 {
+			return s.conn.Reply(ErrSyntax, "syntax error")
+		}
+		if s.pending == "" {
+			return s.conn.Reply(ErrSyntax, "AUTHINFO USER required first")
+		}
+		u, err := s.store.GetUser(context.Background(), s.pending)
+		if err != nil {
+			return err
+		}
+		if u == nil || u.Disabled || !auth.CheckPassword(u.PasswordHash, args[2]) {
+			s.pending = ""
+			return s.conn.Reply(FailAuthNeeded, "Authentication failed")
+		}
+		s.authUser = u.Username
+		s.authOK = true
+		s.pending = ""
+		return s.conn.Reply(OKAuth, "Authentication accepted")
+	default:
+		return s.conn.Reply(ErrCommand, "unsupported AUTHINFO")
+	}
+}
+
+func (s *Session) requirePostAuth() error {
+	n, err := s.store.CountUsers(context.Background())
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return nil // open posting until first user is created
+	}
+	if !s.authOK {
+		return s.conn.Reply(FailAuthNeeded, "Authentication required for POST")
+	}
+	u, err := s.store.GetUser(context.Background(), s.authUser)
+	if err != nil {
+		return err
+	}
+	if u == nil || !u.MayPost() {
+		return s.conn.Reply(FailPostAuth, "posting not permitted")
+	}
+	return nil
+}
+
 func cmdPost(s *Session, _ []string) error {
+	if err := s.requirePostAuth(); err != nil {
+		return err
+	}
 	if err := s.conn.Reply(ContPost, "send article to be posted"); err != nil {
 		return err
 	}
@@ -611,6 +679,9 @@ func cmdPost(s *Session, _ []string) error {
 }
 
 func cmdIHave(s *Session, args []string) error {
+	if !inbound.Allowed(s.cfg, s.conn.Remote()) {
+		return s.conn.Reply(ErrAccess, "IHAVE not permitted from your address")
+	}
 	msgid := args[1]
 	if !article.ValidMessageID(msgid) {
 		return s.conn.Reply(ErrSyntax, "syntax error")

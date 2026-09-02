@@ -80,6 +80,9 @@ func TestGreetingAndCapabilities(t *testing.T) {
 	if !strings.Contains(joined, "IHAVE") {
 		t.Fatalf("should advertise IHAVE: %q", joined)
 	}
+	if !strings.Contains(joined, "AUTHINFO USER") {
+		t.Fatalf("should advertise AUTHINFO USER: %q", joined)
+	}
 	_, _ = c.Write([]byte("QUIT\r\n"))
 	if q := readLine(t, r); !strings.HasPrefix(q, "205 ") {
 		t.Fatalf("quit %q", q)

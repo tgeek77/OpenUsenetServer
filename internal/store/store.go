@@ -69,5 +69,23 @@ type Store interface {
 	Post(ctx context.Context, headers, body, msgid, subject, from, date, refs, xref string, bytes, lines int, groups []string) (*PostResult, error)
 	Next(ctx context.Context, group string, cur int64) (*StoredArticle, error)
 	Prev(ctx context.Context, group string, cur int64) (*StoredArticle, error)
+
+	CountUsers(ctx context.Context) (int, error)
+	ListUsers(ctx context.Context) ([]User, error)
+	GetUser(ctx context.Context, username string) (*User, error)
+	CreateUser(ctx context.Context, u User) (*User, error)
+	UpdateUser(ctx context.Context, username string, role string, canPost, disabled *bool, passwordHash string) error
+	DeleteUser(ctx context.Context, username string) error
+
+	ListPeers(ctx context.Context) ([]Peer, error)
+	ListEnabledPeers(ctx context.Context) ([]Peer, error)
+	GetPeer(ctx context.Context, id int64) (*Peer, error)
+	CreatePeer(ctx context.Context, p Peer) (*Peer, error)
+	UpdatePeer(ctx context.Context, id int64, host string, port int, enabled *bool, notes *string) (*Peer, error)
+	DeletePeer(ctx context.Context, id int64) error
+	CountPeers(ctx context.Context) (int, error)
+
+	ArticlesForGroup(ctx context.Context, group string) ([]StoredArticle, error)
+
 	Close() error
 }

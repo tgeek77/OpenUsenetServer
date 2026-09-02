@@ -8,11 +8,12 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/openusenet/openusenet/internal/auth"
 	"github.com/openusenet/openusenet/internal/config"
 	"github.com/openusenet/openusenet/internal/store"
 )
 
-func TestStatusAndAddGroup(t *testing.T) {
+func TestSetupLoginAndAddGroup(t *testing.T) {
 	st := store.NewMemory()
 	if err := st.EnsureGroup(context.Background(), "local.test", "Local", "y"); err != nil {
 		t.Fatal(err)
@@ -29,7 +30,22 @@ func TestStatusAndAddGroup(t *testing.T) {
 	}
 
 	rr = httptest.NewRecorder()
-	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/api/status", nil))
+	body := bytes.NewBufferString(`{"username":"admin","password":"secret"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/setup", body)
+	req.Header.Set("Content-Type", "application/json")
+	h.ServeHTTP(rr, req)
+	if rr.Code != 200 {
+		t.Fatal(rr.Body.String())
+	}
+	cookie := rr.Result().Cookies()
+	if len(cookie) == 0 {
+		t.Fatal("expected session cookie")
+	}
+
+	rr = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "/api/status", nil)
+	req.AddCookie(cookie[0])
+	h.ServeHTTP(rr, req)
 	if rr.Code != 200 {
 		t.Fatal(rr.Body.String())
 	}
@@ -42,9 +58,10 @@ func TestStatusAndAddGroup(t *testing.T) {
 	}
 
 	rr = httptest.NewRecorder()
-	body := bytes.NewBufferString(`{"name":"alt.test.local","description":"x","status":"y"}`)
-	req := httptest.NewRequest(http.MethodPost, "/api/groups", body)
+	body = bytes.NewBufferString(`{"name":"alt.test.local","description":"x","status":"y"}`)
+	req = httptest.NewRequest(http.MethodPost, "/api/groups", body)
 	req.Header.Set("Content-Type", "application/json")
+	req.AddCookie(cookie[0])
 	h.ServeHTTP(rr, req)
 	if rr.Code != 200 {
 		t.Fatal(rr.Body.String())
@@ -55,11 +72,20 @@ func TestStatusAndAddGroup(t *testing.T) {
 	}
 
 	rr = httptest.NewRecorder()
-	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/api/groups?busy=0", nil))
+	req = httptest.NewRequest(http.MethodGet, "/api/groups?busy=0", nil)
+	req.AddCookie(cookie[0])
+	h.ServeHTTP(rr, req)
 	if rr.Code != 200 {
 		t.Fatal(rr.Body.String())
 	}
 	if !bytes.Contains(rr.Body.Bytes(), []byte(`"name":"alt.test.local"`)) {
 		t.Fatalf("want lowercase json keys, got %s", rr.Body.String())
+	}
+
+	hash, _ := auth.HashPassword("secret")
+	if _, err := st.CreateUser(context.Background(), store.User{
+		Username: "dup", PasswordHash: hash, Role: store.RoleUser, CanPost: true,
+	}); err != nil {
+		t.Fatal(err)
 	}
 }

@@ -6,94 +6,104 @@
 <title>OpenUsenet admin</title>
 <style>
 :root {
-  --bg: #12141a;
-  --panel: #1b1f2a;
-  --ink: #e8eadf;
-  --muted: #9aa3b5;
-  --line: #2a3140;
-  --accent: #c4f542;
-  --warn: #ffb020;
-  --bad: #ff6b6b;
-  --ok: #6ee7a8;
+  --bg: #12141a; --panel: #1b1f2a; --ink: #e8eadf; --muted: #9aa3b5;
+  --line: #2a3140; --accent: #c4f542; --warn: #ffb020; --bad: #ff6b6b; --ok: #6ee7a8;
 }
 * { box-sizing: border-box; }
-body {
-  margin: 0;
-  font: 15px/1.45 "IBM Plex Sans", "Segoe UI", sans-serif;
-  background: var(--bg);
-  color: var(--ink);
-}
-header {
-  padding: 1.25rem 1.5rem 0.75rem;
-  border-bottom: 1px solid var(--line);
-}
+body { margin: 0; font: 15px/1.45 "IBM Plex Sans", "Segoe UI", sans-serif; background: var(--bg); color: var(--ink); }
+header { padding: 1.25rem 1.5rem 0.75rem; border-bottom: 1px solid var(--line); display: flex; flex-wrap: wrap; gap: 1rem; justify-content: space-between; align-items: flex-start; }
 header h1 { margin: 0; font-size: 1.25rem; letter-spacing: 0.04em; }
 header p { margin: 0.25rem 0 0; color: var(--muted); font-size: 0.9rem; }
-.warn {
-  margin: 0.75rem 1.5rem 0;
-  padding: 0.5rem 0.75rem;
-  background: #3a2a12;
-  color: var(--warn);
-  border: 1px solid #5a4018;
-  font-size: 0.85rem;
-}
+.warn { margin: 0.75rem 1.5rem 0; padding: 0.5rem 0.75rem; background: #3a2a12; color: var(--warn); border: 1px solid #5a4018; font-size: 0.85rem; }
 main { padding: 1rem 1.5rem 2.5rem; display: grid; gap: 1.25rem; }
 .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 0.75rem; }
-.card {
-  background: var(--panel);
-  border: 1px solid var(--line);
-  padding: 0.85rem 1rem;
-}
+.card { background: var(--panel); border: 1px solid var(--line); padding: 0.85rem 1rem; }
 .card .n { font-size: 1.6rem; font-variant-numeric: tabular-nums; }
 .card .l { color: var(--muted); font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.06em; }
-section {
-  background: var(--panel);
-  border: 1px solid var(--line);
-  padding: 1rem;
-}
+section { background: var(--panel); border: 1px solid var(--line); padding: 1rem; }
 section h2 { margin: 0 0 0.75rem; font-size: 1rem; }
+.help { color: var(--muted); font-size: 0.85rem; margin: 0 0 0.75rem; }
 .row { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin-bottom: 0.75rem; }
-input, select, button {
-  font: inherit;
-  background: #10131a;
-  color: var(--ink);
-  border: 1px solid var(--line);
-  padding: 0.4rem 0.6rem;
+input, select, button, textarea {
+  font: inherit; background: #10131a; color: var(--ink); border: 1px solid var(--line); padding: 0.4rem 0.6rem;
 }
+textarea { width: 100%; min-height: 7rem; font-family: ui-monospace, monospace; font-size: 0.82rem; }
 button { background: var(--accent); color: #12141a; border: 0; font-weight: 600; cursor: pointer; }
 button.secondary { background: transparent; color: var(--ink); border: 1px solid var(--line); }
 table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
 th, td { text-align: left; padding: 0.4rem 0.5rem; border-bottom: 1px solid var(--line); vertical-align: top; }
 th { color: var(--muted); font-weight: 500; }
 .dot { display: inline-block; width: 0.6rem; height: 0.6rem; border-radius: 50%; margin-right: 0.35rem; }
-.up { background: var(--ok); }
-.down { background: var(--bad); }
+.up { background: var(--ok); } .down { background: var(--bad); }
 .mono { font-family: ui-monospace, "IBM Plex Mono", monospace; font-size: 0.82rem; }
-pre {
-  white-space: pre-wrap;
-  background: #10131a;
-  padding: 0.75rem;
-  border: 1px solid var(--line);
-  max-height: 24rem;
-  overflow: auto;
-}
+pre { white-space: pre-wrap; background: #10131a; padding: 0.75rem; border: 1px solid var(--line); max-height: 24rem; overflow: auto; }
+.hidden { display: none !important; }
+#authbox { max-width: 28rem; margin: 2rem auto; background: var(--panel); border: 1px solid var(--line); padding: 1.25rem; }
+#authbox h2 { margin-top: 0; }
 </style>
 </head>
 <body>
 <header>
-  <h1>OpenUsenet</h1>
-  <p id="sub">admin portal</p>
+  <div>
+    <h1>OpenUsenet</h1>
+    <p id="sub">admin portal</p>
+  </div>
+  <div class="row" id="userbar"></div>
 </header>
-<div class="warn">Authentication is not enabled. Anyone who can reach this port can administer the server.</div>
-<main>
+<div class="warn" id="banner">Authentication protects this portal. NNTP reads stay open; POST requires AUTHINFO once users exist.</div>
+<div id="authbox" class="hidden"></div>
+<main id="app" class="hidden">
   <div class="cards" id="cards"></div>
   <section>
     <h2>Peers</h2>
+    <p class="help">Outbound IHAVE destinations. Mutual peering means both servers add each other. Peers are stored in the database (YAML peers seed an empty DB on first boot).</p>
+    <p class="help"><strong>How to add a peer:</strong> use the form below, or paste an INN <code>newsfeeds</code> / <code>incoming.conf</code> snippet and preview before apply. Only host/port are imported; streaming and filters show as warnings.</p>
+    <div class="row">
+      <input id="phost" placeholder="hostname" size="22">
+      <select id="pport"><option value="119">119</option><option value="563">563</option></select>
+      <input id="pnotes" placeholder="notes" size="24">
+      <button id="padd">Add peer</button>
+    </div>
+    <textarea id="pinn" placeholder="Paste INN newsfeeds or incoming.conf peer { hostname: ... } here"></textarea>
+    <div class="row">
+      <button class="secondary" id="ppreview">Preview INN paste</button>
+      <button id="papply">Apply INN paste</button>
+      <span class="mono" id="pmsg"></span>
+    </div>
+    <pre id="pprev" class="hidden"></pre>
     <table>
-      <thead><tr><th>Status</th><th>Host</th><th>Port</th><th>Note</th></tr></thead>
+      <thead><tr><th>Status</th><th>Host</th><th>Port</th><th>Notes</th><th></th></tr></thead>
       <tbody id="peers"></tbody>
     </table>
     <p class="mono" id="feed"></p>
+  </section>
+  <section>
+    <h2>Users</h2>
+    <div class="row">
+      <input id="uname" placeholder="username" size="16">
+      <input id="upass" type="password" placeholder="password" size="16">
+      <select id="urole"><option value="user">user</option><option value="admin">admin</option></select>
+      <label><input type="checkbox" id="upost" checked> can post</label>
+      <button id="uadd">Add user</button>
+      <span class="mono" id="umsg"></span>
+    </div>
+    <table>
+      <thead><tr><th>Username</th><th>Role</th><th>Post</th><th>Disabled</th><th></th></tr></thead>
+      <tbody id="users"></tbody>
+    </table>
+  </section>
+  <section>
+    <h2>Archive export</h2>
+    <p class="help">Creates per-newsgroup <code>.mbox.gz</code> snapshots for Internet Archive / offsite use. Live articles in Postgres are never deleted.</p>
+    <div class="row">
+      <input id="asel" placeholder="all or wildmat e.g. misc.test*" size="28" value="all">
+      <button id="aexport">Export now</button>
+      <span class="mono" id="amsg"></span>
+    </div>
+    <table>
+      <thead><tr><th>ID</th><th>Status</th><th>Selector</th><th>Dir / error</th><th>Groups</th><th>Articles</th></tr></thead>
+      <tbody id="ajobs"></tbody>
+    </table>
   </section>
   <section>
     <h2>Groups</h2>
@@ -127,30 +137,65 @@ pre {
 <script>
 const $ = (id) => document.getElementById(id);
 async function j(url, opt) {
-  const r = await fetch(url, opt);
+  const r = await fetch(url, Object.assign({credentials:"same-origin"}, opt||{}));
   const t = await r.text();
-  let d;
-  try { d = JSON.parse(t); } catch { throw new Error(t); }
+  let d; try { d = JSON.parse(t); } catch { throw new Error(t); }
   if (!r.ok) throw new Error(d.error || t);
   return d;
 }
 function esc(s) {
   return String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c]));
 }
+function showAuth(setup) {
+  $("authbox").classList.remove("hidden");
+  $("app").classList.add("hidden");
+  $("authbox").innerHTML = setup
+    ? `<h2>Create first admin</h2><p class="help">No users yet. This account can manage the portal and post via AUTHINFO.</p>
+       <div class="row"><input id="lu" placeholder="username"><input id="lp" type="password" placeholder="password"><button id="go">Create admin</button></div>
+       <p class="mono" id="lmsg"></p>`
+    : `<h2>Sign in</h2>
+       <div class="row"><input id="lu" placeholder="username"><input id="lp" type="password" placeholder="password"><button id="go">Sign in</button></div>
+       <p class="mono" id="lmsg"></p>`;
+  $("go").onclick = async () => {
+    try {
+      await j(setup ? "/api/setup" : "/api/login", {
+        method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({username:$("lu").value, password:$("lp").value})
+      });
+      location.reload();
+    } catch (e) { $("lmsg").textContent = e.message; }
+  };
+}
+async function boot() {
+  const me = await j("/api/me");
+  if (me.needs_setup) { showAuth(true); return; }
+  if (!me.logged_in) { showAuth(false); return; }
+  $("authbox").classList.add("hidden");
+  $("app").classList.remove("hidden");
+  $("userbar").innerHTML = `<span class="mono">${esc(me.user.username)} (${esc(me.user.role)})</span>
+    <button class="secondary" id="out">Sign out</button>`;
+  $("out").onclick = async () => { await j("/api/logout",{method:"POST"}); location.reload(); };
+  await Promise.all([loadStatus(), loadGroups(), loadArts(), loadUsers(), loadJobs()]);
+}
 async function loadStatus() {
   const s = await j("/api/status");
   $("sub").textContent = s.hostname + " · " + s.software + " " + s.version + " · nntp " + s.listen_nntp + " · http " + s.listen_http;
   $("cards").innerHTML = [
-    ["Groups", s.groups],
-    ["Articles", s.articles],
-    ["Peers", (s.peers||[]).length],
-    ["Feed OK", s.feed && s.feed.ok],
-    ["Feed fail", s.feed && s.feed.fail],
+    ["Groups", s.groups], ["Articles", s.articles], ["Peers", (s.peers||[]).length],
+    ["Feed OK", s.feed && s.feed.ok], ["Feed fail", s.feed && s.feed.fail],
   ].map(([l,n]) => `<div class="card"><div class="n">${esc(n)}</div><div class="l">${esc(l)}</div></div>`).join("");
   $("peers").innerHTML = (s.peer_status||[]).map(p =>
-    `<tr><td><span class="dot ${p.up ? "up":"down"}"></span>${p.up?"up":"down"}</td><td class="mono">${esc(p.host)}</td><td>${esc(p.port)}</td><td class="mono">${esc(p.error||"")}</td></tr>`
-  ).join("") || `<tr><td colspan="4">No peers configured</td></tr>`;
+    `<tr><td><span class="dot ${p.up?"up":"down"}"></span>${p.enabled?(p.up?"up":"down"):"off"}</td>
+     <td class="mono">${esc(p.host)}</td><td>${esc(p.port)}</td><td class="mono">${esc(p.notes||p.error||"")}</td>
+     <td><button class="secondary" data-del="${p.id}">Remove</button></td></tr>`
+  ).join("") || `<tr><td colspan="5">No peers configured</td></tr>`;
   $("feed").textContent = s.feed && s.feed.last ? ("last IHAVE " + s.feed.last) : "";
+  $("peers").onclick = async (e) => {
+    const b = e.target.closest("button[data-del]");
+    if (!b) return;
+    await j("/api/peers?id="+b.dataset.del, {method:"DELETE"});
+    await loadStatus();
+  };
 }
 async function loadGroups() {
   const q = encodeURIComponent($("gq").value);
@@ -166,6 +211,26 @@ async function loadArts() {
     `<tr data-id="${esc(a.message_id)}"><td class="mono">${esc(a.stored_at)}</td><td class="mono">${esc(a.message_id)}</td><td>${esc(a.from)}</td><td>${esc(a.subject)}</td></tr>`
   ).join("") || `<tr><td colspan="4">No articles yet</td></tr>`;
 }
+async function loadUsers() {
+  const d = await j("/api/users");
+  $("users").innerHTML = (d.users||[]).map(u =>
+    `<tr><td class="mono">${esc(u.username)}</td><td>${esc(u.role)}</td><td>${u.can_post?"yes":"no"}</td><td>${u.disabled?"yes":"no"}</td>
+     <td><button class="secondary" data-du="${esc(u.username)}">Delete</button></td></tr>`
+  ).join("");
+  $("users").onclick = async (e) => {
+    const b = e.target.closest("button[data-du]");
+    if (!b) return;
+    await j("/api/users?username="+encodeURIComponent(b.dataset.du), {method:"DELETE"});
+    await loadUsers();
+  };
+}
+async function loadJobs() {
+  const d = await j("/api/archive/jobs");
+  $("ajobs").innerHTML = (d.jobs||[]).map(j =>
+    `<tr><td class="mono">${esc(j.id)}</td><td>${esc(j.status)}</td><td class="mono">${esc(j.selector)}</td>
+     <td class="mono">${esc(j.error||j.dir||"")}</td><td>${esc(j.groups)}</td><td>${esc(j.articles)}</td></tr>`
+  ).join("") || `<tr><td colspan="6">No export jobs yet</td></tr>`;
+}
 $("gsearch").onclick = loadGroups;
 $("gq").addEventListener("keydown", e => { if (e.key==="Enter") loadGroups(); });
 $("gadd").onclick = async () => {
@@ -175,10 +240,8 @@ $("gadd").onclick = async () => {
       name: $("gname").value, description: $("gdesc").value, status: $("gstat").value
     })});
     $("gmsg").textContent = "added " + $("gname").value;
-    $("busy").checked = false;
-    $("gq").value = $("gname").value;
-    await loadGroups();
-    await loadStatus();
+    $("busy").checked = false; $("gq").value = $("gname").value;
+    await loadGroups(); await loadStatus();
   } catch (e) { $("gmsg").textContent = e.message; }
 };
 $("isc").onclick = async () => {
@@ -186,9 +249,46 @@ $("isc").onclick = async () => {
   try {
     const d = await j("/api/isc", {method:"POST"});
     $("gmsg").textContent = "loaded " + d.loaded + " groups from ISC";
-    await loadStatus();
-    await loadGroups();
+    await loadStatus(); await loadGroups();
   } catch (e) { $("gmsg").textContent = e.message; }
+};
+$("padd").onclick = async () => {
+  try {
+    await j("/api/peers", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({
+      host: $("phost").value, port: Number($("pport").value), notes: $("pnotes").value, enabled: true
+    })});
+    $("pmsg").textContent = "added";
+    await loadStatus();
+  } catch (e) { $("pmsg").textContent = e.message; }
+};
+async function innPaste(apply) {
+  try {
+    const d = await j("/api/peers/import-inn", {method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({text: $("pinn").value, apply})});
+    $("pprev").classList.remove("hidden");
+    $("pprev").textContent = JSON.stringify(d.preview || d, null, 2);
+    $("pmsg").textContent = apply ? ("created "+(d.created||[]).length) : "preview ready";
+    if (apply) await loadStatus();
+  } catch (e) { $("pmsg").textContent = e.message; }
+}
+$("ppreview").onclick = () => innPaste(false);
+$("papply").onclick = () => innPaste(true);
+$("uadd").onclick = async () => {
+  try {
+    await j("/api/users", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({
+      username: $("uname").value, password: $("upass").value, role: $("urole").value, can_post: $("upost").checked
+    })});
+    $("umsg").textContent = "added";
+    await loadUsers();
+  } catch (e) { $("umsg").textContent = e.message; }
+};
+$("aexport").onclick = async () => {
+  try {
+    const d = await j("/api/archive", {method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({selector: $("asel").value})});
+    $("amsg").textContent = "job " + d.job.id + " " + d.job.status;
+    setTimeout(loadJobs, 800);
+  } catch (e) { $("amsg").textContent = e.message; }
 };
 $("arts").addEventListener("click", async (e) => {
   const tr = e.target.closest("tr[data-id]");
@@ -197,12 +297,8 @@ $("arts").addEventListener("click", async (e) => {
   $("art").hidden = false;
   $("art").textContent = (d.headers||"") + "\n\n" + (d.body||"");
 });
-async function boot() {
-  try { await Promise.all([loadStatus(), loadGroups(), loadArts()]); }
-  catch (e) { $("sub").textContent = e.message; }
-}
-boot();
-setInterval(() => { loadStatus(); loadArts(); }, 15000);
+boot().catch(e => { $("sub").textContent = e.message; });
+setInterval(() => { if (!$("app").classList.contains("hidden")) { loadStatus(); loadArts(); loadJobs(); } }, 15000);
 </script>
 </body>
 </html>

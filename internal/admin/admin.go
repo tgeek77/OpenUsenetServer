@@ -8,11 +8,15 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
+	"github.com/openusenet/openusenet/internal/archive"
 	"github.com/openusenet/openusenet/internal/article"
+	"github.com/openusenet/openusenet/internal/auth"
 	"github.com/openusenet/openusenet/internal/config"
 	"github.com/openusenet/openusenet/internal/feed"
+	"github.com/openusenet/openusenet/internal/inn"
 	"github.com/openusenet/openusenet/internal/isc"
 	"github.com/openusenet/openusenet/internal/nntp"
 	"github.com/openusenet/openusenet/internal/store"
@@ -25,21 +29,36 @@ type Portal struct {
 	cfg     config.Config
 	st      store.Store
 	feeder  *feed.Feeder
+	sess    *auth.Sessions
 	started time.Time
+	jobsMu  sync.Mutex
+	jobs    map[string]*store.ArchiveJob
 }
 
 func New(cfg config.Config, st store.Store, feeder *feed.Feeder) *Portal {
-	return &Portal{cfg: cfg, st: st, feeder: feeder, started: time.Now().UTC()}
+	return &Portal{
+		cfg: cfg, st: st, feeder: feeder, sess: auth.NewSessions(),
+		started: time.Now().UTC(), jobs: map[string]*store.ArchiveJob{},
+	}
 }
 
 func (p *Portal) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", p.page)
-	mux.HandleFunc("/api/status", p.status)
-	mux.HandleFunc("/api/groups", p.groups)
-	mux.HandleFunc("/api/articles", p.articles)
-	mux.HandleFunc("/api/article", p.article)
-	mux.HandleFunc("/api/isc", p.isc)
+	mux.HandleFunc("/api/setup", p.setup)
+	mux.HandleFunc("/api/login", p.login)
+	mux.HandleFunc("/api/logout", p.logout)
+	mux.HandleFunc("/api/me", p.me)
+	mux.HandleFunc("/api/status", p.withAuth(p.status, false))
+	mux.HandleFunc("/api/groups", p.withAuth(p.groups, true))
+	mux.HandleFunc("/api/articles", p.withAuth(p.articles, false))
+	mux.HandleFunc("/api/article", p.withAuth(p.article, false))
+	mux.HandleFunc("/api/isc", p.withAuth(p.isc, true))
+	mux.HandleFunc("/api/users", p.withAuth(p.users, true))
+	mux.HandleFunc("/api/peers", p.withAuth(p.peers, true))
+	mux.HandleFunc("/api/peers/import-inn", p.withAuth(p.peersImportINN, true))
+	mux.HandleFunc("/api/archive", p.withAuth(p.archiveAPI, true))
+	mux.HandleFunc("/api/archive/jobs", p.withAuth(p.archiveJobs, true))
 	return mux
 }
 
@@ -52,43 +71,205 @@ func (p *Portal) page(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(indexHTML)
 }
 
-func (p *Portal) status(w http.ResponseWriter, r *http.Request) {
+func (p *Portal) needsSetup(ctx context.Context) (bool, error) {
+	n, err := p.st.CountUsers(ctx)
+	return n == 0, err
+}
+
+func (p *Portal) currentUser(r *http.Request) (store.User, bool) {
+	c, err := r.Cookie(auth.SessionCookie)
+	if err != nil {
+		return store.User{}, false
+	}
+	return p.sess.Get(c.Value)
+}
+
+type handlerFunc func(http.ResponseWriter, *http.Request, store.User)
+
+func (p *Portal) withAuth(next handlerFunc, adminOnly bool) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		need, err := p.needsSetup(r.Context())
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		if need {
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "setup required", "setup": "1"})
+			return
+		}
+		u, ok := p.currentUser(r)
+		if !ok {
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "login required"})
+			return
+		}
+		if adminOnly && !u.IsAdmin() {
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "admin required"})
+			return
+		}
+		next(w, r, u)
+	}
+}
+
+func (p *Portal) setup(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		need, err := p.needsSetup(r.Context())
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"needs_setup": need})
+	case http.MethodPost:
+		need, err := p.needsSetup(r.Context())
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		if !need {
+			writeJSON(w, http.StatusConflict, map[string]string{"error": "already set up"})
+			return
+		}
+		var in struct {
+			Username string `json:"username"`
+			Password string `json:"password"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		hash, err := auth.HashPassword(in.Password)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		u, err := p.st.CreateUser(r.Context(), store.User{
+			Username: in.Username, PasswordHash: hash, Role: store.RoleAdmin, CanPost: true,
+		})
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		id, err := p.sess.Create(*u)
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		http.SetCookie(w, &http.Cookie{Name: auth.SessionCookie, Value: id, Path: "/", HttpOnly: true, SameSite: http.SameSiteLaxMode})
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "user": publicUser(*u)})
+	default:
+		w.WriteHeader(http.StatusMethodNotAllowed)
+	}
+}
+
+func (p *Portal) login(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	var in struct {
+		Username string `json:"username"`
+		Password string `json:"password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	u, err := p.st.GetUser(r.Context(), in.Username)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	if u == nil || u.Disabled || !auth.CheckPassword(u.PasswordHash, in.Password) {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid credentials"})
+		return
+	}
+	id, err := p.sess.Create(*u)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	http.SetCookie(w, &http.Cookie{Name: auth.SessionCookie, Value: id, Path: "/", HttpOnly: true, SameSite: http.SameSiteLaxMode})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "user": publicUser(*u)})
+}
+
+func (p *Portal) logout(w http.ResponseWriter, r *http.Request) {
+	if c, err := r.Cookie(auth.SessionCookie); err == nil {
+		p.sess.Delete(c.Value)
+	}
+	http.SetCookie(w, &http.Cookie{Name: auth.SessionCookie, Value: "", Path: "/", MaxAge: -1})
+	writeJSON(w, http.StatusOK, map[string]string{"ok": "1"})
+}
+
+func (p *Portal) me(w http.ResponseWriter, r *http.Request) {
+	need, err := p.needsSetup(r.Context())
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	u, ok := p.currentUser(r)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"needs_setup": need,
+		"user":        publicUser(u),
+		"logged_in":   ok,
+	})
+}
+
+func publicUser(u store.User) map[string]any {
+	if u.Username == "" {
+		return nil
+	}
+	return map[string]any{
+		"username": u.Username, "role": u.Role, "can_post": u.CanPost, "disabled": u.Disabled,
+	}
+}
+
+func (p *Portal) status(w http.ResponseWriter, r *http.Request, _ store.User) {
 	ctx := r.Context()
 	ng, _ := p.st.CountGroups(ctx)
 	na, _ := p.st.CountArticles(ctx)
-	peers := p.cfg.Peers
+	peers, _ := p.st.ListPeers(ctx)
 	type peerStat struct {
+		ID    int64  `json:"id"`
 		Host  string `json:"host"`
 		Port  int    `json:"port"`
 		Up    bool   `json:"up"`
 		Error string `json:"error,omitempty"`
+		Notes string `json:"notes"`
+		Enabled bool `json:"enabled"`
 	}
 	ps := make([]peerStat, 0, len(peers))
 	for _, peer := range peers {
-		st := peerStat{Host: peer.Host, Port: peer.Port}
-		st.Up, st.Error = pingNNTP(peer.Addr(), 2*time.Second)
+		st := peerStat{ID: peer.ID, Host: peer.Host, Port: peer.Port, Notes: peer.Notes, Enabled: peer.Enabled}
+		if peer.Enabled {
+			st.Up, st.Error = pingNNTP(peer.Addr(), 2*time.Second)
+		}
 		ps = append(ps, st)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"software":    nntp.Software,
-		"version":     nntp.Version,
-		"hostname":    p.cfg.Server.Hostname,
-		"pathhost":    p.cfg.Server.Pathhost,
+		"software":     nntp.Software,
+		"version":      nntp.Version,
+		"hostname":     p.cfg.Server.Hostname,
+		"pathhost":     p.cfg.Server.Pathhost,
 		"organization": p.cfg.Server.Organization,
-		"listen_nntp": p.cfg.Listen.NNTP,
-		"listen_http": p.cfg.Listen.HTTP,
-		"started":     p.started.Format(time.RFC3339),
-		"groups":      ng,
-		"articles":    na,
-		"peers":       peers,
-		"peer_status": ps,
-		"feed":        p.feeder.Stats(),
-		"postgres":    redactURL(p.cfg.Storage.Postgres),
-		"mbox_dir":    p.cfg.Storage.MBoxDir,
+		"listen_nntp":  p.cfg.Listen.NNTP,
+		"listen_http":  p.cfg.Listen.HTTP,
+		"listen_nntp_tls": p.cfg.Listen.NNTPTLS,
+		"listen_http_tls": p.cfg.Listen.HTTPTLS,
+		"started":      p.started.Format(time.RFC3339),
+		"groups":       ng,
+		"articles":     na,
+		"peers":        peers,
+		"peer_status":  ps,
+		"feed":         p.feeder.Stats(),
+		"postgres":     redactURL(p.cfg.Storage.Postgres),
+		"mbox_dir":     p.cfg.Storage.MBoxDir,
+		"export_dir":   p.cfg.Archive.ExportDir,
+		"inbound_allow": p.cfg.Inbound.Allow,
+		"archive_schedule": p.cfg.Archive.Schedule,
 	})
 }
 
-func (p *Portal) groups(w http.ResponseWriter, r *http.Request) {
+func (p *Portal) groups(w http.ResponseWriter, r *http.Request, _ store.User) {
 	switch r.Method {
 	case http.MethodGet:
 		q := r.URL.Query().Get("q")
@@ -128,7 +309,7 @@ func (p *Portal) groups(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (p *Portal) articles(w http.ResponseWriter, r *http.Request) {
+func (p *Portal) articles(w http.ResponseWriter, r *http.Request, _ store.User) {
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
 	arts, err := p.st.RecentArticles(r.Context(), limit)
 	if err != nil {
@@ -154,7 +335,7 @@ func (p *Portal) articles(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"articles": out})
 }
 
-func (p *Portal) article(w http.ResponseWriter, r *http.Request) {
+func (p *Portal) article(w http.ResponseWriter, r *http.Request, _ store.User) {
 	id := strings.TrimSpace(r.URL.Query().Get("id"))
 	if id == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "id required"})
@@ -178,7 +359,7 @@ func (p *Portal) article(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (p *Portal) isc(w http.ResponseWriter, r *http.Request) {
+func (p *Portal) isc(w http.ResponseWriter, r *http.Request, _ store.User) {
 	if r.Method != http.MethodPost {
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
@@ -195,6 +376,243 @@ func (p *Portal) isc(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"loaded": len(groups)})
+}
+
+func (p *Portal) users(w http.ResponseWriter, r *http.Request, me store.User) {
+	switch r.Method {
+	case http.MethodGet:
+		us, err := p.st.ListUsers(r.Context())
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		out := make([]map[string]any, 0, len(us))
+		for _, u := range us {
+			out = append(out, publicUser(u))
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"users": out})
+	case http.MethodPost:
+		var in struct {
+			Username string `json:"username"`
+			Password string `json:"password"`
+			Role     string `json:"role"`
+			CanPost  *bool  `json:"can_post"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		hash, err := auth.HashPassword(in.Password)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		canPost := true
+		if in.CanPost != nil {
+			canPost = *in.CanPost
+		}
+		role := in.Role
+		if role == "" {
+			role = store.RoleUser
+		}
+		u, err := p.st.CreateUser(r.Context(), store.User{
+			Username: in.Username, PasswordHash: hash, Role: role, CanPost: canPost,
+		})
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"user": publicUser(*u)})
+	case http.MethodPatch:
+		var in struct {
+			Username string `json:"username"`
+			Password string `json:"password"`
+			Role     string `json:"role"`
+			CanPost  *bool  `json:"can_post"`
+			Disabled *bool  `json:"disabled"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		hash := ""
+		if in.Password != "" {
+			var err error
+			hash, err = auth.HashPassword(in.Password)
+			if err != nil {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+				return
+			}
+		}
+		if err := p.st.UpdateUser(r.Context(), in.Username, in.Role, in.CanPost, in.Disabled, hash); err != nil {
+			writeErr(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"ok": in.Username})
+	case http.MethodDelete:
+		user := r.URL.Query().Get("username")
+		if user == me.Username {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "cannot delete yourself"})
+			return
+		}
+		if err := p.st.DeleteUser(r.Context(), user); err != nil {
+			writeErr(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"ok": user})
+	default:
+		w.WriteHeader(http.StatusMethodNotAllowed)
+	}
+}
+
+func (p *Portal) peers(w http.ResponseWriter, r *http.Request, _ store.User) {
+	switch r.Method {
+	case http.MethodGet:
+		ps, err := p.st.ListPeers(r.Context())
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"peers": ps})
+	case http.MethodPost:
+		var in struct {
+			Host    string `json:"host"`
+			Port    int    `json:"port"`
+			Enabled *bool  `json:"enabled"`
+			Notes   string `json:"notes"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		en := true
+		if in.Enabled != nil {
+			en = *in.Enabled
+		}
+		created, err := p.st.CreatePeer(r.Context(), store.Peer{
+			Host: in.Host, Port: in.Port, Enabled: en, Notes: in.Notes,
+		})
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"peer": created})
+	case http.MethodPatch:
+		var in struct {
+			ID      int64   `json:"id"`
+			Host    string  `json:"host"`
+			Port    int     `json:"port"`
+			Enabled *bool   `json:"enabled"`
+			Notes   *string `json:"notes"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		peer, err := p.st.UpdatePeer(r.Context(), in.ID, in.Host, in.Port, in.Enabled, in.Notes)
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"peer": peer})
+	case http.MethodDelete:
+		id, _ := strconv.ParseInt(r.URL.Query().Get("id"), 10, 64)
+		if err := p.st.DeletePeer(r.Context(), id); err != nil {
+			writeErr(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"ok": "1"})
+	default:
+		w.WriteHeader(http.StatusMethodNotAllowed)
+	}
+}
+
+func (p *Portal) peersImportINN(w http.ResponseWriter, r *http.Request, _ store.User) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	var in struct {
+		Text  string `json:"text"`
+		Apply bool   `json:"apply"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	drafts := inn.Parse(in.Text)
+	if !in.Apply {
+		writeJSON(w, http.StatusOK, map[string]any{"preview": drafts})
+		return
+	}
+	var created []store.Peer
+	for _, d := range drafts {
+		peer, err := p.st.CreatePeer(r.Context(), store.Peer{
+			Host: d.Host, Port: d.Port, Enabled: true, Notes: d.Notes,
+		})
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		created = append(created, *peer)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"created": created, "preview": drafts})
+}
+
+func (p *Portal) archiveAPI(w http.ResponseWriter, r *http.Request, _ store.User) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	var in struct {
+		Selector string `json:"selector"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&in)
+	if in.Selector == "" {
+		in.Selector = p.cfg.Archive.Groups
+	}
+	job := p.startArchiveJob(in.Selector)
+	writeJSON(w, http.StatusOK, map[string]any{"job": job})
+}
+
+func (p *Portal) archiveJobs(w http.ResponseWriter, r *http.Request, _ store.User) {
+	p.jobsMu.Lock()
+	defer p.jobsMu.Unlock()
+	out := make([]*store.ArchiveJob, 0, len(p.jobs))
+	for _, j := range p.jobs {
+		cp := *j
+		out = append(out, &cp)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"jobs": out})
+}
+
+func (p *Portal) startArchiveJob(selector string) *store.ArchiveJob {
+	id := strconv.FormatInt(time.Now().UnixNano(), 36)
+	job := &store.ArchiveJob{
+		ID: id, Status: "running", Selector: selector,
+		Dir: p.cfg.Archive.ExportDir, Started: time.Now().UTC(),
+	}
+	p.jobsMu.Lock()
+	p.jobs[id] = job
+	p.jobsMu.Unlock()
+	go func() {
+		res, err := archive.Export(context.Background(), p.st, p.cfg.Archive.ExportDir, selector)
+		p.jobsMu.Lock()
+		defer p.jobsMu.Unlock()
+		job.Finished = time.Now().UTC()
+		if err != nil {
+			job.Status = "error"
+			job.Error = err.Error()
+			return
+		}
+		job.Status = "done"
+		job.Dir = res.Dir
+		job.Files = res.Files
+		job.Groups = res.Groups
+		job.Articles = res.Articles
+		_ = archive.PruneOldExports(p.cfg.Archive.ExportDir, p.cfg.Archive.RetainGens)
+	}()
+	return job
 }
 
 func pingNNTP(addr string, timeout time.Duration) (bool, string) {
@@ -219,7 +637,6 @@ func pingNNTP(addr string, timeout time.Duration) (bool, string) {
 }
 
 func redactURL(s string) string {
-	// postgres://user:pass@host → postgres://user:@host
 	scheme, rest, ok := strings.Cut(s, "://")
 	if !ok {
 		return s

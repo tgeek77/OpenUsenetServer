@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"sort"
 	"strings"
 	"strconv"
@@ -28,6 +29,10 @@ type Memory struct {
 	arts    map[string]*memArt // msgid
 	byNum   map[string]map[int64]*memArt
 	history map[string]time.Time
+	users   map[string]*User
+	peers   map[int64]*Peer
+	nextUID int64
+	nextPID int64
 }
 
 func NewMemory() *Memory {
@@ -36,6 +41,8 @@ func NewMemory() *Memory {
 		arts:    map[string]*memArt{},
 		byNum:   map[string]map[int64]*memArt{},
 		history: map[string]time.Time{},
+		users:   map[string]*User{},
+		peers:   map[int64]*Peer{},
 	}
 }
 
@@ -409,6 +416,202 @@ func (m *Memory) Prev(_ context.Context, group string, cur int64) (*StoredArticl
 		}
 	}
 	return found, nil
+}
+
+func (m *Memory) CountUsers(_ context.Context) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.users), nil
+}
+
+func (m *Memory) ListUsers(_ context.Context) ([]User, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]User, 0, len(m.users))
+	for _, u := range m.users {
+		out = append(out, *u)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Username < out[j].Username })
+	return out, nil
+}
+
+func (m *Memory) GetUser(_ context.Context, username string) (*User, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	u, ok := m.users[strings.TrimSpace(username)]
+	if !ok {
+		return nil, nil
+	}
+	cp := *u
+	return &cp, nil
+}
+
+func (m *Memory) CreateUser(_ context.Context, u User) (*User, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	u.Username = strings.TrimSpace(u.Username)
+	if u.Username == "" || u.PasswordHash == "" {
+		return nil, errors.New("username and password required")
+	}
+	if _, ok := m.users[u.Username]; ok {
+		return nil, ErrUserExists
+	}
+	if u.Role == "" {
+		u.Role = RoleUser
+	}
+	m.nextUID++
+	u.ID = m.nextUID
+	u.CreatedAt = time.Now().UTC()
+	cp := u
+	m.users[u.Username] = &cp
+	return &u, nil
+}
+
+func (m *Memory) UpdateUser(_ context.Context, username string, role string, canPost, disabled *bool, passwordHash string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	u, ok := m.users[strings.TrimSpace(username)]
+	if !ok {
+		return ErrUserNotFound
+	}
+	if role != "" {
+		u.Role = role
+	}
+	if canPost != nil {
+		u.CanPost = *canPost
+	}
+	if disabled != nil {
+		u.Disabled = *disabled
+	}
+	if passwordHash != "" {
+		u.PasswordHash = passwordHash
+	}
+	return nil
+}
+
+func (m *Memory) DeleteUser(_ context.Context, username string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.users[strings.TrimSpace(username)]; !ok {
+		return ErrUserNotFound
+	}
+	delete(m.users, strings.TrimSpace(username))
+	return nil
+}
+
+func (m *Memory) CountPeers(_ context.Context) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.peers), nil
+}
+
+func (m *Memory) ListPeers(_ context.Context) ([]Peer, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]Peer, 0, len(m.peers))
+	for _, p := range m.peers {
+		out = append(out, *p)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Host == out[j].Host {
+			return out[i].Port < out[j].Port
+		}
+		return out[i].Host < out[j].Host
+	})
+	return out, nil
+}
+
+func (m *Memory) ListEnabledPeers(ctx context.Context) ([]Peer, error) {
+	all, err := m.ListPeers(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var out []Peer
+	for _, p := range all {
+		if p.Enabled {
+			out = append(out, p)
+		}
+	}
+	return out, nil
+}
+
+func (m *Memory) GetPeer(_ context.Context, id int64) (*Peer, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	p, ok := m.peers[id]
+	if !ok {
+		return nil, nil
+	}
+	cp := *p
+	return &cp, nil
+}
+
+func (m *Memory) CreatePeer(_ context.Context, peer Peer) (*Peer, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	peer.Host = strings.TrimSpace(peer.Host)
+	if peer.Host == "" {
+		return nil, errors.New("host required")
+	}
+	if peer.Port <= 0 {
+		peer.Port = 119
+	}
+	m.nextPID++
+	peer.ID = m.nextPID
+	peer.Created = time.Now().UTC()
+	cp := peer
+	m.peers[peer.ID] = &cp
+	return &peer, nil
+}
+
+func (m *Memory) UpdatePeer(_ context.Context, id int64, host string, port int, enabled *bool, notes *string) (*Peer, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	p, ok := m.peers[id]
+	if !ok {
+		return nil, ErrPeerNotFound
+	}
+	if host = strings.TrimSpace(host); host != "" {
+		p.Host = host
+	}
+	if port > 0 {
+		p.Port = port
+	}
+	if enabled != nil {
+		p.Enabled = *enabled
+	}
+	if notes != nil {
+		p.Notes = *notes
+	}
+	cp := *p
+	return &cp, nil
+}
+
+func (m *Memory) DeletePeer(_ context.Context, id int64) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.peers[id]; !ok {
+		return ErrPeerNotFound
+	}
+	delete(m.peers, id)
+	return nil
+}
+
+func (m *Memory) ArticlesForGroup(_ context.Context, group string) ([]StoredArticle, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	g, ok := m.groups[group]
+	if !ok {
+		return nil, nil
+	}
+	out := make([]StoredArticle, 0, len(g.nums))
+	for _, n := range g.nums {
+		a := m.byNum[group][n]
+		cp := a.StoredArticle
+		cp.Num = n
+		out = append(out, cp)
+	}
+	return out, nil
 }
 
 var (

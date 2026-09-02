@@ -21,9 +21,11 @@ const (
 	OKNewGroups    = 231
 	OKIHave        = 235
 	OKPost         = 240
+	OKAuth         = 281
 
-	ContIHave = 335
-	ContPost  = 340
+	ContIHave    = 335
+	ContPost     = 340
+	ContAuthPass = 381
 
 	FailTerminating     = 400
 	FailWrongMode       = 401

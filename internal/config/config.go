@@ -13,14 +13,17 @@ import (
 
 // Config is the native OpenUsenetServer configuration. It is not inn.conf.
 type Config struct {
-	Server    Server    `yaml:"server"`
-	Listen    Listen    `yaml:"listen"`
-	Storage   Storage   `yaml:"storage"`
-	Retention Retention `yaml:"retention"`
-	Limits    Limits    `yaml:"limits"`
+	Server       Server       `yaml:"server"`
+	Listen       Listen       `yaml:"listen"`
+	TLS          TLS          `yaml:"tls"`
+	Storage      Storage      `yaml:"storage"`
+	Retention    Retention    `yaml:"retention"`
+	Limits       Limits       `yaml:"limits"`
 	Groups       []Group      `yaml:"groups"`
 	Peers        []Peer       `yaml:"peers"`
 	GroupsSource GroupsSource `yaml:"groups_source"`
+	Inbound      Inbound      `yaml:"inbound"`
+	Archive      Archive      `yaml:"archive"`
 }
 
 type Server struct {
@@ -30,15 +33,27 @@ type Server struct {
 }
 
 type Listen struct {
-	NNTP string `yaml:"nntp"`
-	HTTP string `yaml:"http"` // admin portal; "-" disables
+	NNTP    string `yaml:"nntp"`
+	HTTP    string `yaml:"http"`     // admin portal; "-" disables
+	NNTPTLS string `yaml:"nntp_tls"` // optional TLS NNTP; empty disables
+	HTTPTLS string `yaml:"http_tls"` // optional TLS admin; empty disables
+}
+
+type TLS struct {
+	CertFile string `yaml:"cert_file"`
+	KeyFile  string `yaml:"key_file"`
+}
+
+func (t TLS) Enabled() bool {
+	return strings.TrimSpace(t.CertFile) != "" && strings.TrimSpace(t.KeyFile) != ""
 }
 
 type Storage struct {
 	Postgres string `yaml:"postgres"`
-	MBoxDir  string `yaml:"mbox_dir"`
+	MBoxDir  string `yaml:"mbox_dir"` // live append-on-POST mbox spool
 }
 
+// Retention fields are documented but not enforced: live articles are kept indefinitely.
 type Retention struct {
 	LiveDays    int `yaml:"live_days"`
 	HistoryDays int `yaml:"history_days"`
@@ -55,7 +70,7 @@ type Group struct {
 	Status      string `yaml:"status"`
 }
 
-// Peer is an outbound IHAVE destination. This is not INN newsfeeds.
+// Peer is a YAML seed for outbound IHAVE destinations (copied into DB on first boot).
 type Peer struct {
 	Host string `yaml:"host"`
 	Port int    `yaml:"port"`
@@ -73,6 +88,19 @@ func (p Peer) Addr() string {
 type GroupsSource struct {
 	ISCURL   string `yaml:"isc_url"`
 	FetchISC *bool  `yaml:"fetch_isc"`
+}
+
+// Inbound controls who may IHAVE to this server. Empty Allow = all remotes.
+type Inbound struct {
+	Allow []string `yaml:"allow"` // hostnames and/or IP/CIDR
+}
+
+// Archive controls export snapshots (mbox.gz). Never deletes live articles.
+type Archive struct {
+	ExportDir   string `yaml:"export_dir"`
+	Schedule    string `yaml:"schedule"` // daily, weekly, or empty to disable
+	Groups      string `yaml:"groups"`   // all or wildmat
+	RetainGens  int    `yaml:"retain_generations"`
 }
 
 const DefaultISCURL = "https://ftp.isc.org/usenet/CONFIG"
@@ -96,9 +124,14 @@ func Defaults() Config {
 			MBoxDir:  "./archive",
 		},
 		Retention: Retention{LiveDays: 30, HistoryDays: 60},
-		Limits: Limits{MaxArtSize: 5_000_000, IdleSeconds: 180},
+		Limits:    Limits{MaxArtSize: 5_000_000, IdleSeconds: 180},
 		GroupsSource: GroupsSource{
 			ISCURL: DefaultISCURL,
+		},
+		Archive: Archive{
+			ExportDir:  "./exports",
+			Groups:     "all",
+			RetainGens: 4,
 		},
 		Groups: []Group{{
 			Name:        "local.test",
@@ -144,6 +177,15 @@ func Load(path string) (Config, error) {
 	if cfg.Retention.HistoryDays <= 0 {
 		cfg.Retention.HistoryDays = cfg.Retention.LiveDays * 2
 	}
+	if strings.TrimSpace(cfg.Archive.ExportDir) == "" {
+		cfg.Archive.ExportDir = "./exports"
+	}
+	if strings.TrimSpace(cfg.Archive.Groups) == "" {
+		cfg.Archive.Groups = "all"
+	}
+	if cfg.Archive.RetainGens <= 0 {
+		cfg.Archive.RetainGens = 4
+	}
 	for i := range cfg.Groups {
 		if cfg.Groups[i].Status == "" {
 			cfg.Groups[i].Status = "y"
@@ -164,6 +206,14 @@ func Load(path string) (Config, error) {
 	if strings.TrimSpace(cfg.GroupsSource.ISCURL) == "" {
 		cfg.GroupsSource.ISCURL = DefaultISCURL
 	}
+	var allow []string
+	for _, a := range cfg.Inbound.Allow {
+		a = strings.TrimSpace(a)
+		if a != "" {
+			allow = append(allow, a)
+		}
+	}
+	cfg.Inbound.Allow = allow
 	return cfg, nil
 }
 
@@ -183,11 +233,26 @@ func applyEnv(cfg *Config) {
 	if v := os.Getenv("OPENUSENET_HTTP"); v != "" {
 		cfg.Listen.HTTP = v
 	}
+	if v := os.Getenv("OPENUSENET_NNTP_TLS"); v != "" {
+		cfg.Listen.NNTPTLS = v
+	}
+	if v := os.Getenv("OPENUSENET_HTTP_TLS"); v != "" {
+		cfg.Listen.HTTPTLS = v
+	}
+	if v := os.Getenv("OPENUSENET_TLS_CERT"); v != "" {
+		cfg.TLS.CertFile = v
+	}
+	if v := os.Getenv("OPENUSENET_TLS_KEY"); v != "" {
+		cfg.TLS.KeyFile = v
+	}
 	if v := os.Getenv("OPENUSENET_POSTGRES"); v != "" {
 		cfg.Storage.Postgres = v
 	}
 	if v := os.Getenv("OPENUSENET_MBOX_DIR"); v != "" {
 		cfg.Storage.MBoxDir = v
+	}
+	if v := os.Getenv("OPENUSENET_EXPORT_DIR"); v != "" {
+		cfg.Archive.ExportDir = v
 	}
 	if v := os.Getenv("OPENUSENET_ISC_URL"); v != "" {
 		cfg.GroupsSource.ISCURL = v
@@ -199,6 +264,14 @@ func applyEnv(cfg *Config) {
 	if v := os.Getenv("OPENUSENET_MAX_ART_SIZE"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
 			cfg.Limits.MaxArtSize = n
+		}
+	}
+	if v := os.Getenv("OPENUSENET_INBOUND_ALLOW"); v != "" {
+		for _, p := range strings.Split(v, ",") {
+			p = strings.TrimSpace(p)
+			if p != "" {
+				cfg.Inbound.Allow = append(cfg.Inbound.Allow, p)
+			}
 		}
 	}
 }

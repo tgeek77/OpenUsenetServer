@@ -55,6 +55,26 @@ CREATE TABLE IF NOT EXISTS history (
     message_id TEXT PRIMARY KEY,
     arrived_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+CREATE TABLE IF NOT EXISTS users (
+    id BIGSERIAL PRIMARY KEY,
+    username TEXT NOT NULL UNIQUE,
+    password_hash TEXT NOT NULL,
+    role TEXT NOT NULL DEFAULT 'user',
+    can_post BOOLEAN NOT NULL DEFAULT true,
+    disabled BOOLEAN NOT NULL DEFAULT false,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS peers (
+    id BIGSERIAL PRIMARY KEY,
+    host TEXT NOT NULL,
+    port INT NOT NULL DEFAULT 119,
+    enabled BOOLEAN NOT NULL DEFAULT true,
+    notes TEXT NOT NULL DEFAULT '',
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (host, port)
+);
 `
 
 type Postgres struct {
