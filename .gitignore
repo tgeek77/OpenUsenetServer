@@ -1,0 +1,11 @@
+/bin/
+/dist/
+*.exe
+*.test
+*.out
+.env
+config.yml
+/data/
+/archive/
+.DS_Store
+vendor/

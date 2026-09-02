@@ -1,0 +1,29 @@
+# Copy to config.yml for local runs. Docker Compose injects the same
+# values via environment variables — you do not need inn.conf.
+
+server:
+  hostname: news.localhost
+  organization: OpenUsenetServer
+  # Path header token. Defaults to hostname if omitted.
+  pathhost: news.localhost
+
+listen:
+  nntp: ":1119" # use :119 in Docker; 1119 avoids root on a laptop
+
+storage:
+  postgres: postgres://openusenet:openusenet@127.0.0.1:5432/openusenet?sslmode=disable
+  mbox_dir: ./archive
+
+retention:
+  live_days: 30
+  history_days: 60
+
+limits:
+  max_art_size: 5000000
+  idle_seconds: 180
+
+# Seeded on first migrate/serve if the group does not exist.
+groups:
+  - name: local.test
+    description: Local test group
+    status: y

@@ -1,0 +1,7 @@
+.git
+bin
+archive
+data
+*.md
+.env
+config.yml

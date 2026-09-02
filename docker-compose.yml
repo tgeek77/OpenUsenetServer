@@ -1,0 +1,43 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-openusenet}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-openusenet}
+      POSTGRES_DB: ${POSTGRES_DB:-openusenet}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-openusenet} -d ${POSTGRES_DB:-openusenet}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  openusenet:
+    build: .
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "119:119"
+    environment:
+      OPENUSENET_HOSTNAME: ${OPENUSENET_HOSTNAME:-news.localhost}
+      OPENUSENET_ORGANIZATION: ${OPENUSENET_ORGANIZATION:-OpenUsenetServer}
+      OPENUSENET_LISTEN: ${OPENUSENET_LISTEN:-:119}
+      OPENUSENET_POSTGRES: ${OPENUSENET_POSTGRES:-postgres://openusenet:openusenet@postgres:5432/openusenet?sslmode=disable}
+      OPENUSENET_MBOX_DIR: ${OPENUSENET_MBOX_DIR:-/var/spool/openusenet/archive}
+    volumes:
+      - archive:/var/spool/openusenet/archive
+    cap_add:
+      - NET_BIND_SERVICE
+    healthcheck:
+      test: ["CMD", "openusenet", "healthcheck", "--addr", "127.0.0.1:119"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  archive:
