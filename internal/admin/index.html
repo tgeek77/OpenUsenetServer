@@ -166,6 +166,19 @@ section.panel h2 { margin: 0 0 0.6rem; font-size: 1rem; }
     </table>
     <p class="mono" id="feed"></p>
   </section>
+  <section class="panel" id="top1000panel">
+    <h2>TOP1000 path statistics</h2>
+    <p class="help">Peers such as <a href="https://eternal-september.org/index.php?showpage=peering" target="_blank" rel="noopener">Eternal September</a> expect participation in the <a href="http://top1000.anthologeek.net/#participate" target="_blank" rel="noopener">TOP1000</a> project. Path headers from POST and IHAVE are aggregated into ninpaths-compatible reports mailed to <code>top1000@anthologeek.net</code>. Enable with <code>inpaths.enabled: true</code> in config.yml.</p>
+    <p class="mono" id="inpathsstat"></p>
+    <div class="row">
+      <button class="secondary" id="ipflush">Flush dump</button>
+      <button class="secondary" id="ipreport">Preview report</button>
+      <button class="secondary" id="ipsend">Send via SMTP</button>
+      <span class="mono" id="ipmsg"></span>
+    </div>
+    <textarea id="ipreportout" rows="12" readonly placeholder="Report preview…"></textarea>
+    <p class="help mono">Cron example: <code>6 6 * * * openusenet inpaths flush --config /etc/openusenet/config.yml</code><br><code>10 6 * * * openusenet inpaths report --config /etc/openusenet/config.yml | mail -s "inpaths $(hostname)" top1000@anthologeek.net</code></p>
+  </section>
   <div id="peermodal" class="modal hidden">
     <div class="modalbox">
       <h2 id="peertitle">Peer</h2>
@@ -706,7 +719,36 @@ async function loadStatus() {
     if (!b) return;
     await openPeerModal(Number(b.dataset.edit));
   };
+  renderInpaths(s.inpaths || {});
 }
+function renderInpaths(st) {
+  const el = $("inpathsstat");
+  if (!st.enabled) {
+    el.textContent = "Disabled — set inpaths.enabled: true in config.yml and restart.";
+    $("top1000panel").classList.add("hidden");
+    return;
+  }
+  $("top1000panel").classList.remove("hidden");
+  el.textContent = `dir ${st.dir} · pending ${st.pending||0} paths · ${st.dumps||0} dumps · mail ${(st.mailto||[]).join(", ")}${st.smtp ? " · SMTP configured" : ""}`;
+}
+async function inpathsAction(action) {
+  $("ipmsg").textContent = "";
+  try {
+    const d = await j("/api/inpaths", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({action})});
+    if (d.report) $("ipreportout").value = d.report;
+    if (d.status) renderInpaths(d.status);
+    $("ipmsg").textContent = d.ok || "done";
+  } catch (e) {
+    $("ipmsg").textContent = e.message;
+    try {
+      const d = await j("/api/inpaths");
+      if (d.report) $("ipreportout").value = d.report;
+    } catch (_) {}
+  }
+}
+$("ipflush").onclick = () => inpathsAction("flush");
+$("ipreport").onclick = () => inpathsAction("report");
+$("ipsend").onclick = () => inpathsAction("send");
 async function loadGroups() {
   const q = encodeURIComponent($("agq").value);
   const busy = $("busy").checked ? "1" : "0";

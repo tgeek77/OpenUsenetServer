@@ -25,7 +25,7 @@ func startTestServer(t *testing.T) (net.Conn, *store.Memory) {
 	cfg.Server.Hostname = "news.test"
 	cfg.Server.Pathhost = "news.test"
 	cfg.Limits.IdleSeconds = 30
-	go nntp.Serve(nntp.NewConn(b, 30*time.Second), st, nil, cfg, nil, nil)
+	go nntp.Serve(nntp.NewConn(b, 30*time.Second), st, nil, cfg, nil, nil, nil)
 	t.Cleanup(func() { _ = a.Close() })
 	return a, st
 }

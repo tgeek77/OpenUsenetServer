@@ -60,6 +60,19 @@ groups_source:
 #     - 192.168.1.0/24
 #     - feeder.example.org
 
+# TOP1000 path statistics (required by many peers, e.g. Eternal September).
+# Path headers are logged on POST/IHAVE; flush dumps and mail reports to top1000@anthologeek.net.
+# inpaths:
+#   enabled: true
+#   dir: ./pathlog
+#   schedule: daily          # auto-flush; add report.smtp_host to auto-send
+#   report:
+#     mailto:
+#       - top1000@anthologeek.net
+#       - admin@example.org   # Cc yourself to verify non-empty output
+#     smtp_host: smtp.example.org
+#     smtp_port: 587
+
 # Snapshot exports (mbox.gz). Never deletes live articles.
 archive:
   export_dir: ./exports

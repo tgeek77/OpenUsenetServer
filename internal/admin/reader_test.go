@@ -21,7 +21,7 @@ func TestReaderSubscribeOverviewPost(t *testing.T) {
 	}
 	cfg := config.Defaults()
 	cfg.Server.Hostname = "news-a"
-	h := New(cfg, st, nil, nil, nil).Handler()
+	h := New(cfg, st, nil, nil, nil, nil).Handler()
 
 	rr := httptest.NewRecorder()
 	body := bytes.NewBufferString(`{"username":"alice","password":"secret"}`)

@@ -19,6 +19,11 @@ import (
 	"github.com/openusenet/openusenet/internal/wildmat"
 )
 
+// PathRecorder logs Path headers for TOP1000 / inpaths statistics.
+type PathRecorder interface {
+	Record(path string)
+}
+
 type Session struct {
 	conn     *Conn
 	store    store.Store
@@ -29,6 +34,7 @@ type Session struct {
 	closed   bool
 	log      *log.Logger
 	feeder   Feeder
+	paths    PathRecorder
 	authUser string
 	authOK   bool
 	pending  string // AUTHINFO USER pending username
@@ -39,11 +45,11 @@ type Feeder interface {
 	Offer(msgid, path string, groups []string, wire []byte)
 }
 
-func Serve(conn *Conn, st store.Store, mbox *archive.MBox, cfg config.Config, lg *log.Logger, feeder Feeder) {
+func Serve(conn *Conn, st store.Store, mbox *archive.MBox, cfg config.Config, lg *log.Logger, feeder Feeder, paths PathRecorder) {
 	if lg == nil {
 		lg = log.Default()
 	}
-	s := &Session{conn: conn, store: st, mbox: mbox, cfg: cfg, log: lg, feeder: feeder}
+	s := &Session{conn: conn, store: st, mbox: mbox, cfg: cfg, log: lg, feeder: feeder, paths: paths}
 	defer conn.Close()
 	if err := conn.Reply(OKBannerPost, Software+" "+Version+" posting allowed"); err != nil {
 		return
@@ -759,6 +765,9 @@ func (s *Session) storeArticle(ctx context.Context, art *article.Article, wire [
 				s.log.Printf("mbox append %s: %v", g, err)
 			}
 		}
+	}
+	if s.paths != nil {
+		s.paths.Record(art.Get("Path"))
 	}
 	return res, nil
 }

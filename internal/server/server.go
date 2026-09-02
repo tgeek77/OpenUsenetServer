@@ -16,18 +16,20 @@ import (
 	"github.com/openusenet/openusenet/internal/auth"
 	"github.com/openusenet/openusenet/internal/config"
 	"github.com/openusenet/openusenet/internal/feed"
+	"github.com/openusenet/openusenet/internal/inpaths"
 	"github.com/openusenet/openusenet/internal/nntp"
 	"github.com/openusenet/openusenet/internal/store"
 )
 
 type Server struct {
-	cfg    config.Config
-	st     store.Store
-	mbox   *archive.MBox
-	ln     net.Listener
-	httpLn net.Listener
-	log    *log.Logger
-	feeder *feed.Feeder
+	cfg     config.Config
+	st      store.Store
+	mbox    *archive.MBox
+	ln      net.Listener
+	httpLn  net.Listener
+	log     *log.Logger
+	feeder  *feed.Feeder
+	inpaths *inpaths.Logger
 }
 
 func New(cfg config.Config, st store.Store, mbox *archive.MBox, lg *log.Logger) *Server {
@@ -35,6 +37,14 @@ func New(cfg config.Config, st store.Store, mbox *archive.MBox, lg *log.Logger) 
 		lg = log.Default()
 	}
 	s := &Server{cfg: cfg, st: st, mbox: mbox, log: lg, feeder: feed.New(cfg, st, lg)}
+	if cfg.InpathsEnabled() {
+		pl, err := inpaths.NewLogger(cfg.InpathsDir())
+		if err != nil {
+			s.log.Printf("inpaths: %v", err)
+		} else {
+			s.inpaths = pl
+		}
+	}
 	return s
 }
 
@@ -46,6 +56,7 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 		return err
 	}
 	go s.runArchiveSchedule(ctx)
+	go s.runInpathsSchedule(ctx)
 	if err := s.serveHTTP(ctx); err != nil {
 		return err
 	}
@@ -75,13 +86,13 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 		}
 		go func(c net.Conn) {
 			nc := nntp.NewConn(c, s.cfg.Idle())
-			nntp.Serve(nc, s.st, s.mbox, s.cfg, s.log, s.feeder)
+			nntp.Serve(nc, s.st, s.mbox, s.cfg, s.log, s.feeder, s.inpaths)
 		}(c)
 	}
 }
 
 func (s *Server) serveHTTP(ctx context.Context) error {
-	handler := admin.New(s.cfg, s.st, s.mbox, s.feeder, s.log).Handler()
+	handler := admin.New(s.cfg, s.st, s.mbox, s.feeder, s.inpaths, s.log).Handler()
 	if err := s.listenHTTP(ctx, s.cfg.Listen.HTTP, false, handler); err != nil {
 		return err
 	}
@@ -169,7 +180,7 @@ func (s *Server) serveNNTPTLS(ctx context.Context) error {
 			}
 			go func(c net.Conn) {
 				nc := nntp.NewConn(c, s.cfg.Idle())
-				nntp.Serve(nc, s.st, s.mbox, s.cfg, s.log, s.feeder)
+				nntp.Serve(nc, s.st, s.mbox, s.cfg, s.log, s.feeder, s.inpaths)
 			}(c)
 		}
 	}()
@@ -202,6 +213,67 @@ func (s *Server) runArchiveSchedule(ctx context.Context) {
 			}
 			_ = archive.PruneOldExports(s.cfg.Archive.ExportDir, s.cfg.Archive.RetainGens)
 			s.log.Printf("archive schedule wrote %d groups (%d articles) to %s", res.Groups, res.Articles, res.Dir)
+		}
+	}
+}
+
+func (s *Server) runInpathsSchedule(ctx context.Context) {
+	if s.inpaths == nil {
+		return
+	}
+	sched := strings.ToLower(strings.TrimSpace(s.cfg.Inpaths.Schedule))
+	if sched == "" {
+		return
+	}
+	var every time.Duration
+	switch sched {
+	case "daily":
+		every = 24 * time.Hour
+	case "weekly":
+		every = 7 * 24 * time.Hour
+	default:
+		return
+	}
+	s.log.Printf("inpaths schedule %s (every %s)", sched, every)
+	t := time.NewTicker(every)
+	defer t.Stop()
+	run := func() {
+		if s.inpaths.PendingArticles() > 0 {
+			if path, err := s.inpaths.Flush(); err != nil {
+				s.log.Printf("inpaths flush: %v", err)
+			} else {
+				s.log.Printf("inpaths flushed %s", path)
+			}
+		}
+		if strings.TrimSpace(s.cfg.Inpaths.Report.SMTPHost) == "" {
+			return
+		}
+		st, err := inpaths.LoadDumps(s.cfg.InpathsDir(), 32*24*time.Hour)
+		if err != nil || st.Articles() == 0 {
+			return
+		}
+		body, err := st.Report(s.cfg.Server.Pathhost)
+		if err != nil {
+			s.log.Printf("inpaths report: %v", err)
+			return
+		}
+		if err := inpaths.SendReport(body, s.cfg.Server.Pathhost, s.cfg.InpathsMailTo(), s.cfg.Inpaths.Report.MailCC, inpaths.MailOpts{
+			Host: s.cfg.Inpaths.Report.SMTPHost, Port: s.cfg.Inpaths.Report.SMTPPort,
+			Username: s.cfg.Inpaths.Report.SMTPUser, Password: s.cfg.Inpaths.Report.SMTPPass,
+			From: s.cfg.Inpaths.Report.From,
+		}); err != nil {
+			s.log.Printf("inpaths send: %v", err)
+			return
+		}
+		s.log.Printf("inpaths report sent to %v", s.cfg.InpathsMailTo())
+		_, _ = inpaths.PruneDumps(s.cfg.InpathsDir(), 7*24*time.Hour)
+	}
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			run()
 		}
 	}
 }

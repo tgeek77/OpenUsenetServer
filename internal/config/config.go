@@ -23,6 +23,7 @@ type Config struct {
 	Peers        []Peer       `yaml:"peers"`
 	GroupsSource GroupsSource `yaml:"groups_source"`
 	Inbound      Inbound      `yaml:"inbound"`
+	Inpaths      Inpaths      `yaml:"inpaths"`
 	Archive      Archive      `yaml:"archive"`
 }
 
@@ -97,6 +98,47 @@ type GroupsSource struct {
 type Inbound struct {
 	Open  *bool    `yaml:"open"`
 	Allow []string `yaml:"allow"` // hostnames and/or IP/CIDR
+}
+
+// Inpaths controls TOP1000 path statistics (ninpaths-compatible dumps).
+type Inpaths struct {
+	Enabled  bool          `yaml:"enabled"`
+	Dir      string        `yaml:"dir"`      // contains path/ with inpaths.* dumps
+	Schedule string        `yaml:"schedule"` // daily flush+report; empty = manual only
+	Report   InpathsReport `yaml:"report"`
+}
+
+type InpathsReport struct {
+	MailTo   []string `yaml:"mailto"` // default top1000@anthologeek.net when sending
+	MailCC   []string `yaml:"cc"`
+	SMTPHost string   `yaml:"smtp_host"`
+	SMTPPort int      `yaml:"smtp_port"`
+	SMTPUser string   `yaml:"smtp_user"`
+	SMTPPass string   `yaml:"smtp_pass"`
+	From     string   `yaml:"from"`
+}
+
+// InpathsEnabled reports whether path logging is on.
+func (c Config) InpathsEnabled() bool {
+	if c.Inpaths.Enabled {
+		return true
+	}
+	return strings.TrimSpace(c.Inpaths.Dir) != ""
+}
+
+func (c Config) InpathsDir() string {
+	dir := strings.TrimSpace(c.Inpaths.Dir)
+	if dir == "" {
+		dir = "./pathlog"
+	}
+	return dir
+}
+
+func (c Config) InpathsMailTo() []string {
+	if len(c.Inpaths.Report.MailTo) > 0 {
+		return c.Inpaths.Report.MailTo
+	}
+	return []string{"top1000@anthologeek.net"}
 }
 
 // Archive controls export snapshots (mbox.gz). Never deletes live articles.
@@ -218,6 +260,9 @@ func Load(path string) (Config, error) {
 		}
 	}
 	cfg.Inbound.Allow = allow
+	if strings.TrimSpace(cfg.Inpaths.Dir) == "" && cfg.Inpaths.Enabled {
+		cfg.Inpaths.Dir = "./pathlog"
+	}
 	return cfg, nil
 }
 
@@ -281,6 +326,13 @@ func applyEnv(cfg *Config) {
 	if v := os.Getenv("OPENUSENET_INBOUND_OPEN"); v != "" {
 		on := v == "1" || strings.EqualFold(v, "true") || strings.EqualFold(v, "yes")
 		cfg.Inbound.Open = &on
+	}
+	if v := os.Getenv("OPENUSENET_INPATHS_DIR"); v != "" {
+		cfg.Inpaths.Dir = v
+		cfg.Inpaths.Enabled = true
+	}
+	if v := os.Getenv("OPENUSENET_INPATHS_ENABLE"); v != "" {
+		cfg.Inpaths.Enabled = v == "1" || strings.EqualFold(v, "true") || strings.EqualFold(v, "yes")
 	}
 }
 

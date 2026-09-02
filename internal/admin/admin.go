@@ -18,6 +18,7 @@ import (
 	"github.com/openusenet/openusenet/internal/config"
 	"github.com/openusenet/openusenet/internal/feed"
 	"github.com/openusenet/openusenet/internal/inbound"
+	"github.com/openusenet/openusenet/internal/inpaths"
 	"github.com/openusenet/openusenet/internal/inn"
 	"github.com/openusenet/openusenet/internal/isc"
 	"github.com/openusenet/openusenet/internal/nntp"
@@ -32,6 +33,7 @@ type Portal struct {
 	st      store.Store
 	mbox    *archive.MBox
 	feeder  *feed.Feeder
+	inpaths *inpaths.Logger
 	sess    *auth.Sessions
 	started time.Time
 	jobsMu  sync.Mutex
@@ -39,12 +41,12 @@ type Portal struct {
 	log     *log.Logger
 }
 
-func New(cfg config.Config, st store.Store, mbox *archive.MBox, feeder *feed.Feeder, lg *log.Logger) *Portal {
+func New(cfg config.Config, st store.Store, mbox *archive.MBox, feeder *feed.Feeder, paths *inpaths.Logger, lg *log.Logger) *Portal {
 	if lg == nil {
 		lg = log.Default()
 	}
 	return &Portal{
-		cfg: cfg, st: st, mbox: mbox, feeder: feeder, sess: auth.NewSessions(),
+		cfg: cfg, st: st, mbox: mbox, feeder: feeder, inpaths: paths, sess: auth.NewSessions(),
 		started: time.Now().UTC(), jobs: map[string]*store.ArchiveJob{}, log: lg,
 	}
 }
@@ -65,6 +67,7 @@ func (p *Portal) Handler() http.Handler {
 	mux.HandleFunc("/api/peers", p.withAuth(p.peers, true))
 	mux.HandleFunc("/api/peers/import-inn", p.withAuth(p.peersImportINN, true))
 	mux.HandleFunc("/api/peers/our-side", p.withAuth(p.peersOurSide, true))
+	mux.HandleFunc("/api/inpaths", p.withAuth(p.inpathsAPI, true))
 	mux.HandleFunc("/api/archive", p.withAuth(p.archiveAPI, true))
 	mux.HandleFunc("/api/archive/jobs", p.withAuth(p.archiveJobs, true))
 	mux.HandleFunc("/api/reader/", p.withAuth(p.reader, false))
@@ -289,6 +292,7 @@ func (p *Portal) status(w http.ResponseWriter, r *http.Request, _ store.User) {
 			"peer_hosts":      peerHosts,
 		},
 		"archive_schedule": p.cfg.Archive.Schedule,
+		"inpaths":          p.inpathsStatus(),
 		"our_side":         p.ourSideSnippets(inn.ExportOpts{}),
 	})
 }

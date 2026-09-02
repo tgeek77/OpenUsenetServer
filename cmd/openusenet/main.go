@@ -13,6 +13,7 @@ import (
 	"github.com/openusenet/openusenet/internal/archive"
 	"github.com/openusenet/openusenet/internal/auth"
 	"github.com/openusenet/openusenet/internal/config"
+	"github.com/openusenet/openusenet/internal/inpaths"
 	"github.com/openusenet/openusenet/internal/isc"
 	"github.com/openusenet/openusenet/internal/nntp"
 	"github.com/openusenet/openusenet/internal/server"
@@ -44,6 +45,8 @@ func run(args []string) error {
 		return cmdUser(args[1:])
 	case "archive":
 		return cmdArchive(args[1:])
+	case "inpaths":
+		return cmdInpaths(args[1:])
 	case "version":
 		fmt.Printf("%s %s\n", nntp.Software, nntp.Version)
 		return nil
@@ -62,6 +65,7 @@ Commands:
   migrate       Apply PostgreSQL schema and seed groups
   user          Manage users (add first admin, etc.)
   archive       Export mbox.gz snapshots (never deletes live articles)
+  inpaths         TOP1000 path statistics (ninpaths-compatible)
   healthcheck   Dial NNTP and check the greeting (for Docker HEALTHCHECK)
   version       Print version
 
@@ -69,6 +73,7 @@ Examples:
   openusenet serve --config config.yml
   openusenet user add --admin --username admin --password secret --config config.yml
   openusenet archive export --groups 'misc.test*' --config config.yml
+  openusenet inpaths report --config config.yml
   OPENUSENET_BOOTSTRAP_ADMIN=admin:secret openusenet serve --config config.yml
 
 Use openusenet <command> --help for command options.
@@ -327,6 +332,99 @@ Options:
 Examples:
   openusenet archive export --groups all --config config.yml
   openusenet archive export --groups 'misc.test*' --dir ./exports
+`
+
+func cmdInpaths(args []string) error {
+	if len(args) == 0 || args[0] == "-h" || args[0] == "--help" {
+		fmt.Print(inpathsHelp)
+		return nil
+	}
+	fs := newFlagSet("inpaths")
+	cfgPath := fs.String("config", "", "Path to config.yml")
+	sub := args[0]
+	rest := args[1:]
+	if err := parseHelp(fs, rest, inpathsHelp); err != nil {
+		return err
+	}
+	cfg, err := config.Load(*cfgPath)
+	if err != nil {
+		return err
+	}
+	if !cfg.InpathsEnabled() {
+		return fmt.Errorf("inpaths not enabled — set inpaths.enabled: true in config.yml")
+	}
+	dir := cfg.InpathsDir()
+	pathhost := cfg.Server.Pathhost
+	if pathhost == "" {
+		pathhost = cfg.Server.Hostname
+	}
+	switch sub {
+	case "flush":
+		lg, err := inpaths.NewLogger(dir)
+		if err != nil {
+			return err
+		}
+		path, err := lg.Flush()
+		if err != nil {
+			return err
+		}
+		fmt.Println("ok", path)
+		return nil
+	case "report":
+		st, err := inpaths.LoadDumps(dir, 32*24*time.Hour)
+		if err != nil {
+			return err
+		}
+		body, err := st.Report(pathhost)
+		if err != nil {
+			return err
+		}
+		fmt.Print(body)
+		return nil
+	case "send":
+		st, err := inpaths.LoadDumps(dir, 32*24*time.Hour)
+		if err != nil {
+			return err
+		}
+		body, err := st.Report(pathhost)
+		if err != nil {
+			return err
+		}
+		if cfg.Inpaths.Report.SMTPHost == "" {
+			return fmt.Errorf("inpaths.report.smtp_host required (or pipe openusenet inpaths report to mail)")
+		}
+		if err := inpaths.SendReport(body, pathhost, cfg.InpathsMailTo(), cfg.Inpaths.Report.MailCC, inpaths.MailOpts{
+			Host: cfg.Inpaths.Report.SMTPHost, Port: cfg.Inpaths.Report.SMTPPort,
+			Username: cfg.Inpaths.Report.SMTPUser, Password: cfg.Inpaths.Report.SMTPPass,
+			From:     cfg.Inpaths.Report.From,
+		}); err != nil {
+			return err
+		}
+		fmt.Println("ok sent to", cfg.InpathsMailTo())
+		return nil
+	default:
+		return fmt.Errorf("unknown inpaths subcommand %q\n  openusenet inpaths --help", sub)
+	}
+}
+
+const inpathsHelp = `Usage:
+  openusenet inpaths flush|report|send [options]
+
+Record Path headers while serving (inpaths.enabled), then submit statistics
+to the TOP1000 project — required by many peers (e.g. Eternal September).
+See http://top1000.anthologeek.net/#participate
+
+Subcommands:
+  flush     Write a ninpaths dump file from the live accumulator (usually automatic)
+  report    Print merged report (pipe to mail for top1000@anthologeek.net)
+  send      Email report via configured SMTP
+
+Options:
+  --config FILE     YAML config
+
+Example cron (daily flush + mail via sendmail):
+  6 6 * * * openusenet inpaths flush --config /etc/openusenet/config.yml
+  10 6 * * * openusenet inpaths report --config /etc/openusenet/config.yml | mail -s "inpaths $(hostname)" top1000@anthologeek.net
 `
 
 func cmdHealth(args []string) error {
