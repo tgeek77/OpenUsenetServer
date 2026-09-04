@@ -892,7 +892,7 @@ func cmdPost(s *Session, _ []string) error {
 	if dup {
 		return s.conn.Reply(FailPostReject, "duplicate Message-ID")
 	}
-	if _, err := s.storeArticle(ctx, art, wire); errors.Is(err, store.ErrNoGroup) {
+	if _, err := s.storeArticle(ctx, art, wire, isBin); errors.Is(err, store.ErrNoGroup) {
 		return s.conn.Reply(FailPostReject, "newsgroup does not exist")
 	} else if errors.Is(err, store.ErrDuplicate) {
 		return s.conn.Reply(FailPostReject, "duplicate Message-ID")
@@ -993,7 +993,7 @@ func cmdIHave(s *Session, args []string) error {
 		return s.conn.Reply(FailIHaveReject, "duplicate Message-ID")
 	}
 	isBin := binary.LooksBinary(art.RawHeaders, art.Body)
-	if _, err := s.storeArticle(ctx, art, wire); errors.Is(err, store.ErrNoGroup) {
+	if _, err := s.storeArticle(ctx, art, wire, isBin); errors.Is(err, store.ErrNoGroup) {
 		s.rememberReject(msgid)
 		return s.conn.Reply(FailIHaveReject, "newsgroup does not exist")
 	} else if errors.Is(err, store.ErrDuplicate) {
@@ -1012,13 +1012,19 @@ func cmdIHave(s *Session, args []string) error {
 	return nil
 }
 
-func (s *Session) storeArticle(ctx context.Context, art *article.Article, wire []byte) (*store.PostResult, error) {
+func (s *Session) storeArticle(ctx context.Context, art *article.Article, wire []byte, isBinary bool) (*store.PostResult, error) {
 	hdr, body, _ := strings.Cut(string(wire), "\r\n\r\n")
 	res, err := s.store.Post(ctx, hdr, body, art.Get("Message-ID"), art.Get("Subject"),
 		art.Get("From"), art.Get("Date"), art.Get("References"), s.cfg.Server.Hostname,
-		art.Bytes(), art.Lines(), art.Newsgroups())
+		art.Bytes(), art.Lines(), art.Newsgroups(), isBinary)
 	if err != nil {
 		return nil, err
+	}
+	if err := s.store.RecordContentStats(ctx, store.ContentStatsEvent{
+		Groups: art.Newsgroups(), From: art.Get("From"), Path: art.Get("Path"),
+		Binary: isBinary, ExcludeSite: []string{s.cfg.Server.Pathhost, s.cfg.Server.Hostname},
+	}); err != nil && s.log != nil {
+		s.log.Printf("content stats: %v", err)
 	}
 	if s.mbox != nil {
 		art.Set("Xref", res.Xref)

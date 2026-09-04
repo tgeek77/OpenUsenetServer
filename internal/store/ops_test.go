@@ -9,7 +9,7 @@ func TestRememberAndCancel(t *testing.T) {
 	m := NewMemory()
 	ctx := context.Background()
 	_ = m.EnsureGroup(ctx, "local.test", "", "y")
-	_, err := m.Post(ctx, "Subject: x\r\n", "body", "<a@b>", "x", "a@b", "Mon, 01 Jan 2024 00:00:00 +0000", "", "host", 10, 1, []string{"local.test"})
+	_, err := m.Post(ctx, "Subject: x\r\n", "body", "<a@b>", "x", "a@b", "Mon, 01 Jan 2024 00:00:00 +0000", "", "host", 10, 1, []string{"local.test"}, false)
 	if err != nil {
 		t.Fatal(err)
 	}

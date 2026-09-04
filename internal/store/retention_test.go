@@ -77,7 +77,7 @@ func TestExpireRemovesShortRetention(t *testing.T) {
 	_ = m.EnsureGroup(ctx, "alt.junk", "x", "y")
 	days := 7
 	_ = m.SetGroupRetention(ctx, "alt.junk", &days, RetentionModeAuto)
-	_, err := m.Post(ctx, "Subject: x\r\n", "body", "<old@x>", "x", "a@b.c", "now", "", "news", 4, 1, []string{"alt.junk"})
+	_, err := m.Post(ctx, "Subject: x\r\n", "body", "<old@x>", "x", "a@b.c", "now", "", "news", 4, 1, []string{"alt.junk"}, false)
 	if err != nil {
 		t.Fatal(err)
 	}

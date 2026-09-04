@@ -72,6 +72,12 @@ section.panel h2 { margin: 0 0 0.6rem; font-size: 1rem; }
 @media (max-width: 720px) { .grid2 { grid-template-columns: 1fr; } }
 .grid2 label { display: flex; flex-direction: column; gap: 0.2rem; font-size: 0.82rem; color: var(--muted); }
 .grid2 input, .grid2 select { width: 100%; }
+.statgrid { display: grid; grid-template-columns: 1fr 280px; gap: 1rem; align-items: start; }
+@media (max-width: 800px) { .statgrid { grid-template-columns: 1fr; } }
+.piebox { display: flex; flex-direction: column; align-items: center; gap: 0.5rem; }
+.piebox svg { width: 220px; height: 220px; }
+.pielabel { font-size: 0.78rem; color: var(--muted); max-width: 220px; }
+.togglebtn.active { background: var(--accent); color: #12141a; border-color: var(--accent); font-weight: 600; }
 </style>
 </head>
 <body>
@@ -158,6 +164,17 @@ section.panel h2 { margin: 0 0 0.6rem; font-size: 1rem; }
     </div>
   </section>
   <section class="panel">
+    <h2>Health / feed overview</h2>
+    <div class="cards" id="opshealthcards"></div>
+    <p class="mono" id="opswatch"></p>
+    <p class="mono" id="opsfeed"></p>
+    <p class="mono" id="opsexpirstat"></p>
+    <table>
+      <thead><tr><th>Peer</th><th>Host</th><th>Patterns</th><th>Queue</th><th>Ping</th><th></th></tr></thead>
+      <tbody id="opspeers"></tbody>
+    </table>
+  </section>
+  <section class="panel">
     <h2>Maintenance</h2>
     <p class="help">news.daily analogs: run expire now, cancel/poison Message-IDs, flush outbound feed queues.</p>
     <div class="row">
@@ -182,22 +199,48 @@ section.panel h2 { margin: 0 0 0.6rem; font-size: 1rem; }
 <main id="stats" class="hidden">
   <div class="cards" id="statcards"></div>
   <section class="panel">
-    <h2>Watchdog / health</h2>
-    <p class="mono" id="statwatch"></p>
-    <p class="help">innwatch-style: load, disk usage on the mbox volume, and feed queue depth can pause or throttle automatically.</p>
+    <h2>Top non-binary groups</h2>
+    <p class="help">Popularity from accept-time rollups (text posts only). Crossposts count once per group.</p>
+    <div class="row">
+      <button class="secondary togglebtn active" data-period="today" id="stoday">Today (UTC)</button>
+      <button class="secondary togglebtn" data-period="total" id="stotal">All-time</button>
+      <span style="width:1rem"></span>
+      <button class="secondary togglebtn active" data-top="10" id="stop10">Top 10</button>
+      <button class="secondary togglebtn" data-top="25" id="stop25">Top 25</button>
+      <button class="secondary togglebtn" data-top="100" id="stop100">Top 100</button>
+    </div>
+    <div class="statgrid">
+      <table>
+        <thead><tr><th>#</th><th>Group</th><th>Articles</th></tr></thead>
+        <tbody id="statgroups"></tbody>
+      </table>
+      <div class="piebox">
+        <div id="statpie"></div>
+        <div class="pielabel" id="statpielabel">Top 10 share</div>
+      </div>
+    </div>
   </section>
-  <section class="panel">
-    <h2>Feed queues</h2>
-    <p class="mono" id="statfeed"></p>
-    <table>
-      <thead><tr><th>Peer</th><th>Host</th><th>Patterns</th><th>Queue</th><th>Ping</th><th></th></tr></thead>
-      <tbody id="statpeers"></tbody>
-    </table>
-  </section>
-  <section class="panel">
-    <h2>Expire</h2>
-    <p class="mono" id="statexpire"></p>
-  </section>
+  <div class="statgrid">
+    <section class="panel">
+      <h2>Top 10 posters (today)</h2>
+      <table><thead><tr><th>From</th><th>N</th></tr></thead><tbody id="statpostersday"></tbody></table>
+    </section>
+    <section class="panel">
+      <h2>Top 10 posters (all-time)</h2>
+      <table><thead><tr><th>From</th><th>N</th></tr></thead><tbody id="statposterstot"></tbody></table>
+    </section>
+  </div>
+  <div class="statgrid">
+    <section class="panel">
+      <h2>Top 10 Path providers (today)</h2>
+      <p class="help">Bang-path hops excluding this server and not-for-mail.</p>
+      <table><thead><tr><th>Site</th><th>N</th></tr></thead><tbody id="statprovday"></tbody></table>
+    </section>
+    <section class="panel">
+      <h2>Top 10 Path providers (all-time)</h2>
+      <table><thead><tr><th>Site</th><th>N</th></tr></thead><tbody id="statprovtot"></tbody></table>
+    </section>
+  </div>
 </main>
 <main id="admin" class="hidden">
   <div class="cards" id="cards"></div>
@@ -436,9 +479,9 @@ async function boot() {
     <button class="secondary" id="out">Sign out</button>`;
   $("out").onclick = async () => { await j("/api/logout",{method:"POST"}); location.reload(); };
   let nav = `<button class="navbtn active" data-mode="reader">Reader</button>`;
+  nav += `<button class="navbtn" data-mode="stats">Stats</button>`;
   if (me.is_admin) {
     nav += `<button class="navbtn" data-mode="ops">Ops</button>`;
-    nav += `<button class="navbtn" data-mode="stats">Stats</button>`;
     nav += `<button class="navbtn" data-mode="admin">Admin</button>`;
   }
   $("nav").innerHTML = nav;
@@ -640,6 +683,10 @@ $("csend").onclick = async () => {
 };
 
 // Ops / Stats
+let contentStats = null;
+let statsPeriod = "today";
+let statsTop = "10";
+
 async function opsAction(body) {
   return j("/api/ops", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body)});
 }
@@ -653,36 +700,97 @@ async function loadOps() {
     ["Load1", (o.load1||0).toFixed ? o.load1.toFixed(2) : o.load1],
     ["Disk %", (o.disk_used_pct||0).toFixed ? o.disk_used_pct.toFixed(1) : o.disk_used_pct],
   ].map(([l,n]) => `<div class="card"><div class="n">${esc(n)}</div><div class="l">${esc(l)}</div></div>`).join("");
-}
-async function loadStats() {
+
   const s = await j("/api/stats");
-  const o = s.ops || {};
+  const so = s.ops || {};
   const q = s.feed_queue || {};
-  $("statcards").innerHTML = [
+  $("opshealthcards").innerHTML = [
     ["Groups", s.groups], ["Articles", s.articles], ["Uptime s", s.uptime_sec],
     ["Feed OK", s.feed && s.feed.ok], ["Feed fail", s.feed && s.feed.fail],
     ["Queue", q.depth||0], ["Mode", s.mode_label],
   ].map(([l,n]) => `<div class="card"><div class="n">${esc(n)}</div><div class="l">${esc(l)}</div></div>`).join("");
   const w = s.watchdog || {};
-  $("statwatch").textContent = `load1=${(o.load1||0).toFixed?.(2)??o.load1} disk=${(o.disk_used_pct||0).toFixed?.(1)??o.disk_used_pct}% ` +
-    `queue=${o.feed_queue_depth||0} · thresholds pause=${w.load_pause} throttle=${w.load_throttle} go=${w.load_go} disk%=${w.disk_throttle_pct} queue=${w.queue_throttle} · art_cutoff=${s.art_cutoff}d history=${s.history_days}d`;
-  $("statfeed").textContent = s.feed && s.feed.last ? ("last " + s.feed.last) : "no recent transfers";
-  $("statpeers").innerHTML = (s.peers||[]).map(p =>
+  $("opswatch").textContent = `load1=${(so.load1||0).toFixed?.(2)??so.load1} disk=${(so.disk_used_pct||0).toFixed?.(1)??so.disk_used_pct}% ` +
+    `queue=${so.feed_queue_depth||0} · thresholds pause=${w.load_pause} throttle=${w.load_throttle} go=${w.load_go} disk%=${w.disk_throttle_pct} queue=${w.queue_throttle} · art_cutoff=${s.art_cutoff}d history=${s.history_days}d`;
+  $("opsfeed").textContent = s.feed && s.feed.last ? ("last " + s.feed.last) : "no recent transfers";
+  $("opspeers").innerHTML = (s.peers||[]).map(p =>
     `<tr><td class="mono">${esc(p.name||"")}</td><td class="mono">${esc(p.host)}</td><td class="mono">${esc(p.patterns||"*")}</td>
      <td>${esc(p.queue||0)}</td><td><span class="dot ${p.up?"up":"down"}"></span>${p.enabled?(p.up?"up":"down"):"off"}</td>
      <td><button class="secondary" data-flush="${p.id}">Flush queue</button></td></tr>`
   ).join("") || `<tr><td colspan="6">No peers</td></tr>`;
-  $("statpeers").onclick = async (e) => {
+  $("opspeers").onclick = async (e) => {
     const b = e.target.closest("button[data-flush]");
     if (!b) return;
     await opsAction({action:"flush_feed", peer_id: Number(b.dataset.flush)});
-    await loadStats();
+    await loadOps();
   };
-  const ex = o.expire_result;
-  $("statexpire").textContent = o.expire_last
-    ? (`last ${o.expire_last}` + (ex ? ` · overview=${ex.overview_removed} articles=${ex.articles_removed} history=${ex.history_removed}` : ""))
+  const ex = so.expire_result;
+  $("opsexpirstat").textContent = so.expire_last
+    ? (`last ${so.expire_last}` + (ex ? ` · overview=${ex.overview_removed} articles=${ex.articles_removed} history=${ex.history_removed}` : ""))
     : "no expire run yet";
 }
+
+function pieSVG(rows) {
+  const colors = ["#c4f542","#6ee7a8","#7dd3fc","#c4b5fd","#f9a8d4","#fcd34d","#fb923c","#f87171","#a3e635","#67e8f9"];
+  const total = rows.reduce((a,r) => a + (r.count||0), 0);
+  if (!total) return `<svg viewBox="0 0 100 100"><circle cx="50" cy="50" r="40" fill="#2a3140"/></svg>`;
+  let ang = -Math.PI/2, parts = "";
+  rows.slice(0,10).forEach((r,i) => {
+    const slice = 2*Math.PI * ((r.count||0)/total);
+    const x1 = 50 + 40*Math.cos(ang), y1 = 50 + 40*Math.sin(ang);
+    ang += slice;
+    const x2 = 50 + 40*Math.cos(ang), y2 = 50 + 40*Math.sin(ang);
+    const large = slice > Math.PI ? 1 : 0;
+    parts += `<path d="M50,50 L${x1},${y1} A40,40 0 ${large} 1 ${x2},${y2} Z" fill="${colors[i%colors.length]}"/>`;
+  });
+  return `<svg viewBox="0 0 100 100">${parts}</svg>`;
+}
+
+function renderContentStats() {
+  if (!contentStats) return;
+  $("statcards").innerHTML = [
+    ["Populated groups", contentStats.populated_groups||0],
+  ].map(([l,n]) => `<div class="card"><div class="n">${esc(n)}</div><div class="l">${esc(l)}</div></div>`).join("");
+  const key = statsPeriod === "today" ? "top_groups_today" : "top_groups_total";
+  const map = contentStats[key] || {};
+  const rows = map[statsTop] || [];
+  $("statgroups").innerHTML = rows.map((r,i) =>
+    `<tr><td>${i+1}</td><td class="mono">${esc(r.name)}</td><td>${esc(r.count)}</td></tr>`
+  ).join("") || `<tr><td colspan="3">No data yet</td></tr>`;
+  const pieRows = (map["10"] || []).slice(0,10);
+  $("statpie").innerHTML = pieSVG(pieRows);
+  $("statpielabel").textContent = pieRows.length ? "Top 10 share (same window)" : "No data yet";
+  const fromRows = (id, arr) => {
+    $(id).innerHTML = (arr||[]).map(r =>
+      `<tr><td class="mono">${esc(r.from)}</td><td>${esc(r.count)}</td></tr>`
+    ).join("") || `<tr><td colspan="2">—</td></tr>`;
+  };
+  const siteRows = (id, arr) => {
+    $(id).innerHTML = (arr||[]).map(r =>
+      `<tr><td class="mono">${esc(r.site)}</td><td>${esc(r.count)}</td></tr>`
+    ).join("") || `<tr><td colspan="2">—</td></tr>`;
+  };
+  fromRows("statpostersday", contentStats.top_posters_today);
+  fromRows("statposterstot", contentStats.top_posters_total);
+  siteRows("statprovday", contentStats.top_providers_today);
+  siteRows("statprovtot", contentStats.top_providers_total);
+}
+
+async function loadStats() {
+  contentStats = await j("/api/reader/stats");
+  document.querySelectorAll("#stats [data-period]").forEach(b => b.classList.toggle("active", b.dataset.period === statsPeriod));
+  document.querySelectorAll("#stats [data-top]").forEach(b => b.classList.toggle("active", b.dataset.top === statsTop));
+  renderContentStats();
+}
+$("stats").onclick = (e) => {
+  const b = e.target.closest("button[data-period],button[data-top]");
+  if (!b) return;
+  if (b.dataset.period) statsPeriod = b.dataset.period;
+  if (b.dataset.top) statsTop = b.dataset.top;
+  document.querySelectorAll("#stats [data-period]").forEach(x => x.classList.toggle("active", x.dataset.period === statsPeriod));
+  document.querySelectorAll("#stats [data-top]").forEach(x => x.classList.toggle("active", x.dataset.top === statsTop));
+  renderContentStats();
+};
 $("opspause").onclick = async () => { try { await opsAction({action:"pause", reason:$("opsreason").value}); $("opsmsg").textContent="paused"; await loadOps(); } catch(e){ $("opsmsg").textContent=e.message; } };
 $("opsthrottle").onclick = async () => { try { await opsAction({action:"throttle", reason:$("opsreason").value}); $("opsmsg").textContent="throttled"; await loadOps(); } catch(e){ $("opsmsg").textContent=e.message; } };
 $("opsgo").onclick = async () => { try { await opsAction({action:"go"}); $("opsmsg").textContent="running"; await loadOps(); } catch(e){ $("opsmsg").textContent=e.message; } };

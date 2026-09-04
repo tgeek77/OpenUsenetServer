@@ -21,7 +21,7 @@ func TestExportGzip(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := st.Post(ctx, "Subject: hi\r\nFrom: a@b.c\r\nNewsgroups: local.test\r\nMessage-ID: <e@x>\r\n",
-		"body\r\n", "<e@x>", "hi", "a@b.c", time.Now().Format(time.RFC1123Z), "", "news", 10, 1, []string{"local.test"}); err != nil {
+		"body\r\n", "<e@x>", "hi", "a@b.c", time.Now().Format(time.RFC1123Z), "", "news", 10, 1, []string{"local.test"}, false); err != nil {
 		t.Fatal(err)
 	}
 	dir := t.TempDir()

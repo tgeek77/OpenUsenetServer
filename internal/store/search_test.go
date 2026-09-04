@@ -11,12 +11,12 @@ func TestSearchArticles(t *testing.T) {
 	_ = m.EnsureGroup(ctx, "local.test", "", "y")
 	_ = m.EnsureGroup(ctx, "misc.test", "", "y")
 	_, err := m.Post(ctx, "Subject: Hello World\r\n", "unique pineapple body text",
-		"<s1@t>", "Hello World", "alice@x", "Mon, 01 Jan 2024 00:00:00 +0000", "", "host", 40, 1, []string{"local.test"})
+		"<s1@t>", "Hello World", "alice@x", "Mon, 01 Jan 2024 00:00:00 +0000", "", "host", 40, 1, []string{"local.test"}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	_, err = m.Post(ctx, "Subject: Other\r\n", "nothing special",
-		"<s2@t>", "Other", "bob@x", "Mon, 01 Jan 2024 00:00:00 +0000", "", "host", 20, 1, []string{"misc.test"})
+		"<s2@t>", "Other", "bob@x", "Mon, 01 Jan 2024 00:00:00 +0000", "", "host", 20, 1, []string{"misc.test"}, false)
 	if err != nil {
 		t.Fatal(err)
 	}

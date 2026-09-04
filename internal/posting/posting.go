@@ -120,12 +120,18 @@ func Accept(ctx context.Context, cfg config.Config, st store.Store, mbox *archiv
 	hdr, bodyPart, _ := strings.Cut(string(wire), "\r\n\r\n")
 	res, err := st.Post(ctx, hdr, bodyPart, msgid, art.Get("Subject"),
 		art.Get("From"), art.Get("Date"), art.Get("References"), cfg.Server.Hostname,
-		art.Bytes(), art.Lines(), art.Newsgroups())
+		art.Bytes(), art.Lines(), art.Newsgroups(), isBin)
 	if err != nil {
 		return nil, err
 	}
 	if _, err := st.NoteAccept(ctx, art.Newsgroups(), isBin, retention.FloodFromConfig(cfg)); err != nil {
 		lg.Printf("retention note: %v", err)
+	}
+	if err := st.RecordContentStats(ctx, store.ContentStatsEvent{
+		Groups: art.Newsgroups(), From: art.Get("From"), Path: art.Get("Path"),
+		Binary: isBin, ExcludeSite: []string{cfg.Server.Pathhost, cfg.Server.Hostname},
+	}); err != nil {
+		lg.Printf("content stats: %v", err)
 	}
 	if mbox != nil {
 		art.Set("Xref", res.Xref)

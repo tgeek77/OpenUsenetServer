@@ -28,6 +28,8 @@ func (p *Portal) reader(w http.ResponseWriter, r *http.Request, u store.User) {
 		p.readerSearchGroups(w, r, u)
 	case path == "/search" && r.Method == http.MethodGet:
 		p.readerSearchArticles(w, r, u)
+	case path == "/stats" && r.Method == http.MethodGet:
+		p.readerContentStats(w, r, u)
 	case path == "/post" && r.Method == http.MethodPost:
 		p.readerPost(w, r, u)
 	case strings.HasPrefix(path, "/groups/"):
@@ -107,6 +109,15 @@ func (p *Portal) readerSearchArticles(w http.ResponseWriter, r *http.Request, _ 
 		hits = []store.ArticleSearchHit{}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"hits": hits, "q": q, "group": group})
+}
+
+func (p *Portal) readerContentStats(w http.ResponseWriter, r *http.Request, _ store.User) {
+	st, err := p.st.ContentStats(r.Context())
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, st)
 }
 
 func (p *Portal) readerGroupPath(w http.ResponseWriter, r *http.Request, u store.User, rest string) {

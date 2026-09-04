@@ -132,6 +132,10 @@ func OpenPostgres(ctx context.Context, url string) (*Postgres, error) {
 		pool.Close()
 		return nil, err
 	}
+	if err := p.migrateContentStats(ctx); err != nil {
+		pool.Close()
+		return nil, err
+	}
 	return p, nil
 }
 
@@ -536,7 +540,7 @@ func (p *Postgres) HasMessageID(ctx context.Context, msgid string) (bool, error)
 	return err == nil, err
 }
 
-func (p *Postgres) Post(ctx context.Context, headers, body, msgid, subject, from, date, refs, xrefHost string, bytes, lines int, groups []string) (*PostResult, error) {
+func (p *Postgres) Post(ctx context.Context, headers, body, msgid, subject, from, date, refs, xrefHost string, bytes, lines int, groups []string, isBinary bool) (*PostResult, error) {
 	tx, err := p.pool.Begin(ctx)
 	if err != nil {
 		return nil, err
@@ -592,9 +596,9 @@ func (p *Postgres) Post(ctx context.Context, headers, body, msgid, subject, from
 
 	var artID int64
 	err = tx.QueryRow(ctx, `
-		INSERT INTO articles (message_id, subject, from_hdr, date_hdr, references_hdr, bytes, lines, headers, body, xref)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id`,
-		msgid, subject, from, date, refs, bytes, lines, headers, body, xref).Scan(&artID)
+		INSERT INTO articles (message_id, subject, from_hdr, date_hdr, references_hdr, bytes, lines, headers, body, xref, is_binary)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING id`,
+		msgid, subject, from, date, refs, bytes, lines, headers, body, xref, isBinary).Scan(&artID)
 	if err != nil {
 		if isUniqueViolation(err) {
 			return nil, ErrDuplicate

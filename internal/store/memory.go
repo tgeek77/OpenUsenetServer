@@ -19,7 +19,8 @@ type memGroup struct {
 
 type memArt struct {
 	StoredArticle
-	groups map[string]int64
+	groups   map[string]int64
+	isBinary bool
 }
 
 // Memory is an in-process store for tests.
@@ -41,18 +42,31 @@ type Memory struct {
 	alerts   []memAlert
 	binQuota map[string]int
 	feedQ    []FeedQueueItem
+
+	statGroupDay   map[string]map[string]statGB // day -> group -> counts
+	statGroupTotal map[string]statGB            // group -> counts
+	statFromDay    map[string]map[string]int64  // day -> from -> n
+	statPathDay    map[string]map[string]int64  // day -> site -> n
+}
+
+type statGB struct {
+	textN, binN int64
 }
 
 func NewMemory() *Memory {
 	return &Memory{
-		groups:  map[string]*memGroup{},
-		arts:    map[string]*memArt{},
-		byNum:   map[string]map[int64]*memArt{},
-		history: map[string]time.Time{},
-		users:   map[string]*User{},
-		peers:   map[int64]*Peer{},
-		subs:    map[int64]map[string]time.Time{},
-		reads:   map[int64]map[string]int64{},
+		groups:         map[string]*memGroup{},
+		arts:           map[string]*memArt{},
+		byNum:          map[string]map[int64]*memArt{},
+		history:        map[string]time.Time{},
+		users:          map[string]*User{},
+		peers:          map[int64]*Peer{},
+		subs:           map[int64]map[string]time.Time{},
+		reads:          map[int64]map[string]int64{},
+		statGroupDay:   map[string]map[string]statGB{},
+		statGroupTotal: map[string]statGB{},
+		statFromDay:    map[string]map[string]int64{},
+		statPathDay:    map[string]map[string]int64{},
 	}
 }
 
@@ -423,7 +437,7 @@ func (m *Memory) HasMessageID(_ context.Context, msgid string) (bool, error) {
 	return ok, nil
 }
 
-func (m *Memory) Post(_ context.Context, headers, body, msgid, subject, from, date, refs, xref string, bytes, lines int, groups []string) (*PostResult, error) {
+func (m *Memory) Post(_ context.Context, headers, body, msgid, subject, from, date, refs, xref string, bytes, lines int, groups []string, isBinary bool) (*PostResult, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if _, ok := m.history[msgid]; ok {
@@ -446,7 +460,8 @@ func (m *Memory) Post(_ context.Context, headers, body, msgid, subject, from, da
 			Bytes: bytes, Lines: lines, StoredAt: time.Now(),
 			Subject: subject, From: from, Date: date, Refs: refs,
 		},
-		groups: map[string]int64{},
+		groups:   map[string]int64{},
+		isBinary: isBinary,
 	}
 	nums := map[string]int64{}
 	var xrefParts []string
@@ -956,6 +971,170 @@ func (m *Memory) FeedQueueStats(_ context.Context) (FeedQueueStats, error) {
 		st.OldestAge = time.Since(oldest)
 	}
 	return st, nil
+}
+
+func (m *Memory) RecordContentStats(_ context.Context, ev ContentStatsEvent) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	day := ev.Day.UTC()
+	if day.IsZero() {
+		day = time.Now().UTC()
+	}
+	dkey := day.Format("2006-01-02")
+	textInc, binInc := int64(0), int64(0)
+	if ev.Binary {
+		binInc = 1
+	} else {
+		textInc = 1
+	}
+	if m.statGroupDay[dkey] == nil {
+		m.statGroupDay[dkey] = map[string]statGB{}
+	}
+	for _, g := range ev.Groups {
+		g = strings.TrimSpace(g)
+		if g == "" {
+			continue
+		}
+		cur := m.statGroupDay[dkey][g]
+		cur.textN += textInc
+		cur.binN += binInc
+		m.statGroupDay[dkey][g] = cur
+		tot := m.statGroupTotal[g]
+		tot.textN += textInc
+		tot.binN += binInc
+		m.statGroupTotal[g] = tot
+	}
+	if fk := NormalizeFromKey(ev.From); fk != "" {
+		if m.statFromDay[dkey] == nil {
+			m.statFromDay[dkey] = map[string]int64{}
+		}
+		m.statFromDay[dkey][fk]++
+	}
+	if m.statPathDay[dkey] == nil {
+		m.statPathDay[dkey] = map[string]int64{}
+	}
+	for _, site := range PathStatSites(ev.Path, ev.ExcludeSite...) {
+		m.statPathDay[dkey][site]++
+	}
+	return nil
+}
+
+func (m *Memory) ContentStats(_ context.Context) (ContentStats, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := ContentStats{
+		TopGroupsToday: map[string][]NameCount{},
+		TopGroupsTotal: map[string][]NameCount{},
+	}
+	for _, g := range m.groups {
+		if g.Count > 1 {
+			out.PopulatedGroups++
+		}
+	}
+	today := time.Now().UTC().Format("2006-01-02")
+	out.TopGroupsToday = sliceTops(rankGroupsMem(m.statGroupDay[today], true))
+	out.TopGroupsTotal = sliceTops(rankGroupsTotalMem(m.statGroupTotal))
+	out.TopPostersToday = rankFromMem(m.statFromDay[today], 10)
+	out.TopPostersTotal = rankFromAllMem(m.statFromDay, 10)
+	out.TopProvidersToday = rankPathMem(m.statPathDay[today], 10)
+	out.TopProvidersTotal = rankPathAllMem(m.statPathDay, 10)
+	return out, nil
+}
+
+func rankGroupsMem(m map[string]statGB, textOnly bool) []NameCount {
+	var out []NameCount
+	for name, c := range m {
+		n := c.textN
+		if !textOnly {
+			n += c.binN
+		}
+		if n > 0 {
+			out = append(out, NameCount{Name: name, Count: n})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Count != out[j].Count {
+			return out[i].Count > out[j].Count
+		}
+		return out[i].Name < out[j].Name
+	})
+	if len(out) > 100 {
+		out = out[:100]
+	}
+	return out
+}
+
+func rankGroupsTotalMem(m map[string]statGB) []NameCount {
+	var out []NameCount
+	for name, c := range m {
+		if c.textN > 0 {
+			out = append(out, NameCount{Name: name, Count: c.textN})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Count != out[j].Count {
+			return out[i].Count > out[j].Count
+		}
+		return out[i].Name < out[j].Name
+	})
+	if len(out) > 100 {
+		out = out[:100]
+	}
+	return out
+}
+
+func rankFromMem(m map[string]int64, limit int) []FromCount {
+	var out []FromCount
+	for k, n := range m {
+		out = append(out, FromCount{From: k, Count: n})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Count != out[j].Count {
+			return out[i].Count > out[j].Count
+		}
+		return out[i].From < out[j].From
+	})
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out
+}
+
+func rankFromAllMem(days map[string]map[string]int64, limit int) []FromCount {
+	sum := map[string]int64{}
+	for _, m := range days {
+		for k, n := range m {
+			sum[k] += n
+		}
+	}
+	return rankFromMem(sum, limit)
+}
+
+func rankPathMem(m map[string]int64, limit int) []SiteCount {
+	var out []SiteCount
+	for k, n := range m {
+		out = append(out, SiteCount{Site: k, Count: n})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Count != out[j].Count {
+			return out[i].Count > out[j].Count
+		}
+		return out[i].Site < out[j].Site
+	})
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out
+}
+
+func rankPathAllMem(days map[string]map[string]int64, limit int) []SiteCount {
+	sum := map[string]int64{}
+	for _, m := range days {
+		for k, n := range m {
+			sum[k] += n
+		}
+	}
+	return rankPathMem(sum, limit)
 }
 
 var (

@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"openusenet/internal/article"
+	"openusenet/internal/binary"
 	"openusenet/internal/store"
 )
 
@@ -92,9 +93,10 @@ func Import(ctx context.Context, st store.Store, r io.Reader, opt ImportOpts) (I
 				hdr, body = h, b
 			}
 		}
+		isBin := binary.LooksBinary(art.RawHeaders, art.Body)
 		_, err = st.Post(ctx, hdr, body, msgid,
 			art.Get("Subject"), art.Get("From"), art.Get("Date"), art.Get("References"),
-			opt.Hostname, art.Bytes(), art.Lines(), groups)
+			opt.Hostname, art.Bytes(), art.Lines(), groups, isBin)
 		if errors.Is(err, store.ErrDuplicate) {
 			res.Duplicates++
 			return nil
@@ -105,6 +107,12 @@ func Import(ctx context.Context, st store.Store, r io.Reader, opt ImportOpts) (I
 		}
 		if err != nil {
 			return fmt.Errorf("store %s: %w", msgid, err)
+		}
+		if err := st.RecordContentStats(ctx, store.ContentStatsEvent{
+			Groups: groups, From: art.Get("From"), Path: art.Get("Path"),
+			Binary: isBin, ExcludeSite: []string{opt.Hostname},
+		}); err != nil {
+			return fmt.Errorf("content stats %s: %w", msgid, err)
 		}
 		res.Imported++
 		for _, g := range groups {
