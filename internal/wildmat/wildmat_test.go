@@ -19,6 +19,8 @@ func TestMatch(t *testing.T) {
 		{"local.*", "alt.test", false},
 		{"*,!local.*", "alt.test", true},
 		{"*,!local.*", "local.test", false},
+		{"*,@*.bina*,!local.*", "alt.binaries.foo", false},
+		{"*,@*.bina*,!local.*", "comp.lang.go", true},
 	}
 	for _, c := range cases {
 		got := Match(c.pat, c.s)

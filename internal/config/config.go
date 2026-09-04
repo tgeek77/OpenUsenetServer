@@ -26,6 +26,7 @@ type Config struct {
 	Inpaths      Inpaths      `yaml:"inpaths"`
 	Cleanfeed    Cleanfeed    `yaml:"cleanfeed"`
 	Archive      Archive      `yaml:"archive"`
+	Watchdog     Watchdog     `yaml:"watchdog"`
 }
 
 type Server struct {
@@ -86,8 +87,29 @@ func (r Retention) EffectiveDefaultLiveDays() int {
 }
 
 type Limits struct {
-	MaxArtSize  int `yaml:"max_art_size"`
-	IdleSeconds int `yaml:"idle_seconds"`
+	MaxArtSize      int  `yaml:"max_art_size"`
+	IdleSeconds     int  `yaml:"idle_seconds"`
+	ArtCutoffDays   int  `yaml:"art_cutoff_days"`  // reject articles older than N days; 0 disables
+	RememberRejects bool `yaml:"remember_rejects"` // keep rejected MIDs in history
+}
+
+// Watchdog is an innwatch-style auto pause/throttle controller.
+type Watchdog struct {
+	Enabled         *bool   `yaml:"enabled"`
+	IntervalSeconds int     `yaml:"interval_seconds"`
+	LoadPause       float64 `yaml:"load_pause"`
+	LoadThrottle    float64 `yaml:"load_throttle"`
+	LoadGo          float64 `yaml:"load_go"`
+	DiskThrottlePct int     `yaml:"disk_throttle_pct"`
+	QueueThrottle   int     `yaml:"queue_throttle"`
+}
+
+// IsEnabled reports whether the watchdog should run (default true).
+func (w Watchdog) IsEnabled() bool {
+	if w.Enabled == nil {
+		return true
+	}
+	return *w.Enabled
 }
 
 type Group struct {
@@ -229,7 +251,15 @@ func Defaults() Config {
 				MinBinaryRatio: 0.5,
 			},
 		},
-		Limits: Limits{MaxArtSize: 5_000_000, IdleSeconds: 180},
+		Limits: Limits{MaxArtSize: 5_000_000, IdleSeconds: 180, ArtCutoffDays: 10, RememberRejects: true},
+		Watchdog: Watchdog{
+			IntervalSeconds: 60,
+			LoadPause:       16,
+			LoadThrottle:    24,
+			LoadGo:          8,
+			DiskThrottlePct: 95,
+			QueueThrottle:   5000,
+		},
 		GroupsSource: GroupsSource{
 			ISCURL: DefaultISCURL,
 		},
@@ -275,6 +305,14 @@ func Load(path string) (Config, error) {
 	}
 	if cfg.Limits.IdleSeconds <= 0 {
 		cfg.Limits.IdleSeconds = 180
+	}
+	if cfg.Limits.ArtCutoffDays < 0 {
+		cfg.Limits.ArtCutoffDays = 0
+	}
+	// RememberRejects defaults true when unset in YAML zero-value... use pointer? 
+	// Defaults() sets true; YAML false stays false. OK.
+	if cfg.Watchdog.IntervalSeconds <= 0 {
+		cfg.Watchdog.IntervalSeconds = 60
 	}
 	if cfg.Retention.FloodLiveDays <= 0 {
 		cfg.Retention.FloodLiveDays = 7

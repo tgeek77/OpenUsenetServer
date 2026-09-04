@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"time"
 
 	"openusenet/internal/archive"
 	"openusenet/internal/article"
@@ -78,6 +79,22 @@ func Accept(ctx context.Context, cfg config.Config, st store.Store, mbox *archiv
 		Organization: cfg.Server.Organization,
 	}); err != nil {
 		return nil, err
+	}
+	if article.TooOld(art.Get("Date"), cfg.Limits.ArtCutoffDays, time.Time{}) {
+		if cfg.Limits.RememberRejects {
+			_ = st.RememberMessageID(ctx, art.Get("Message-ID"))
+		}
+		return nil, fmt.Errorf("article too old")
+	}
+	approved := strings.TrimSpace(art.Get("Approved")) != ""
+	for _, name := range art.Newsgroups() {
+		g, err := st.GetGroup(ctx, name)
+		if err != nil {
+			return nil, err
+		}
+		if g != nil && g.Status == "m" && !approved {
+			return nil, fmt.Errorf("moderated group %s requires Approved", name)
+		}
 	}
 	isBin := binary.LooksBinary(art.RawHeaders, art.Body)
 	if isBin && userID > 0 {

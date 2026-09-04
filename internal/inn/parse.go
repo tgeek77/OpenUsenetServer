@@ -88,7 +88,7 @@ func Parse(text string) []Draft {
 			if i := strings.IndexAny(host, " \t"); i >= 0 {
 				host = host[:i]
 			}
-			warns := []string{"newsfeeds flags/patterns not applied (" + flags + "; " + patterns + ")"}
+			warns := []string{"patterns applied on offer/accept (" + patterns + ")"}
 			if strings.Contains(flags, "S") || strings.Contains(flags, "Nm") {
 				warns = append(warns, "streaming CHECK/TAKETHIS not supported yet")
 			}

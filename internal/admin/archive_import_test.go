@@ -21,7 +21,7 @@ func TestArchiveImportAPI(t *testing.T) {
 	st := store.NewMemory()
 	cfg := config.Defaults()
 	cfg.Server.Hostname = "news-a"
-	p := New(cfg, st, nil, nil, nil, nil)
+	p := New(cfg, st, nil, nil, nil, nil, nil)
 	h := p.Handler()
 
 	rr := httptest.NewRecorder()

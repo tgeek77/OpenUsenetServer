@@ -124,6 +124,10 @@ func OpenPostgres(ctx context.Context, url string) (*Postgres, error) {
 		pool.Close()
 		return nil, err
 	}
+	if err := p.migrateFeedQueue(ctx); err != nil {
+		pool.Close()
+		return nil, err
+	}
 	return p, nil
 }
 

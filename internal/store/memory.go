@@ -24,21 +24,23 @@ type memArt struct {
 
 // Memory is an in-process store for tests.
 type Memory struct {
-	mu      sync.Mutex
-	groups  map[string]*memGroup
-	arts    map[string]*memArt // msgid
-	byNum   map[string]map[int64]*memArt
-	history map[string]time.Time
-	users   map[string]*User
-	peers   map[int64]*Peer
-	nextUID int64
-	nextPID int64
-	nextAID int64
-	subs    map[int64]map[string]time.Time // userID -> group -> subscribed_at
-	reads   map[int64]map[string]int64     // userID -> group -> last_read_num
-	accepts map[string][]memAccept
-	alerts  []memAlert
+	mu       sync.Mutex
+	groups   map[string]*memGroup
+	arts     map[string]*memArt // msgid
+	byNum    map[string]map[int64]*memArt
+	history  map[string]time.Time
+	users    map[string]*User
+	peers    map[int64]*Peer
+	nextUID  int64
+	nextPID  int64
+	nextAID  int64
+	nextFQID int64
+	subs     map[int64]map[string]time.Time // userID -> group -> subscribed_at
+	reads    map[int64]map[string]int64     // userID -> group -> last_read_num
+	accepts  map[string][]memAccept
+	alerts   []memAlert
 	binQuota map[string]int
+	feedQ    []FeedQueueItem
 }
 
 func NewMemory() *Memory {
@@ -691,6 +693,187 @@ func (m *Memory) SetReadState(_ context.Context, userID int64, group string, las
 		m.reads[userID][group] = lastReadNum
 	}
 	return nil
+}
+
+func (m *Memory) RememberMessageID(_ context.Context, msgid string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.history[msgid]; !ok {
+		m.history[msgid] = time.Now()
+	}
+	return nil
+}
+
+func (m *Memory) CancelMessageID(_ context.Context, msgid string) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.history[msgid] = time.Now()
+	art, ok := m.arts[msgid]
+	if !ok {
+		return false, nil
+	}
+	for g, n := range art.groups {
+		delete(m.byNum[g], n)
+		if mg, ok := m.groups[g]; ok {
+			mg.Count--
+			if mg.Count < 0 {
+				mg.Count = 0
+			}
+			var nums []int64
+			for _, x := range mg.nums {
+				if x != n {
+					nums = append(nums, x)
+				}
+			}
+			mg.nums = nums
+			if len(nums) == 0 {
+				mg.Low = mg.High
+			} else {
+				mg.Low = nums[0]
+				for _, x := range nums {
+					if x < mg.Low {
+						mg.Low = x
+					}
+				}
+			}
+		}
+	}
+	delete(m.arts, msgid)
+	var kept []FeedQueueItem
+	for _, it := range m.feedQ {
+		if it.MessageID != msgid {
+			kept = append(kept, it)
+		}
+	}
+	m.feedQ = kept
+	return true, nil
+}
+
+func (m *Memory) DeleteGroup(_ context.Context, name string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.groups[name]; !ok {
+		return ErrNoGroup
+	}
+	for msgid, art := range m.arts {
+		if _, in := art.groups[name]; !in {
+			continue
+		}
+		delete(art.groups, name)
+		if len(art.groups) == 0 {
+			delete(m.arts, msgid)
+		}
+	}
+	delete(m.groups, name)
+	delete(m.byNum, name)
+	for uid := range m.subs {
+		delete(m.subs[uid], name)
+	}
+	for uid := range m.reads {
+		delete(m.reads[uid], name)
+	}
+	return nil
+}
+
+func (m *Memory) EnqueueFeed(_ context.Context, peerID int64, msgid string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, it := range m.feedQ {
+		if it.PeerID == peerID && it.MessageID == msgid {
+			return nil
+		}
+	}
+	m.nextFQID++
+	m.feedQ = append(m.feedQ, FeedQueueItem{
+		ID: m.nextFQID, PeerID: peerID, MessageID: msgid,
+		NextAttempt: time.Now(), CreatedAt: time.Now(),
+	})
+	return nil
+}
+
+func (m *Memory) ClaimFeedDue(_ context.Context, limit int) ([]FeedQueueItem, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if limit <= 0 {
+		limit = 32
+	}
+	now := time.Now()
+	var out []FeedQueueItem
+	for i := range m.feedQ {
+		if len(out) >= limit {
+			break
+		}
+		if m.feedQ[i].NextAttempt.After(now) {
+			continue
+		}
+		m.feedQ[i].Attempts++
+		m.feedQ[i].NextAttempt = now.Add(2 * time.Minute)
+		out = append(out, m.feedQ[i])
+	}
+	return out, nil
+}
+
+func (m *Memory) CompleteFeed(_ context.Context, id int64) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var kept []FeedQueueItem
+	for _, it := range m.feedQ {
+		if it.ID != id {
+			kept = append(kept, it)
+		}
+	}
+	m.feedQ = kept
+	return nil
+}
+
+func (m *Memory) FailFeed(_ context.Context, id int64, errMsg string, retryAfter time.Duration) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if retryAfter <= 0 {
+		retryAfter = 2 * time.Minute
+	}
+	for i := range m.feedQ {
+		if m.feedQ[i].ID == id {
+			m.feedQ[i].LastError = errMsg
+			m.feedQ[i].NextAttempt = time.Now().Add(retryAfter)
+			break
+		}
+	}
+	return nil
+}
+
+func (m *Memory) FlushFeedQueue(_ context.Context, peerID int64) (int, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var kept []FeedQueueItem
+	n := 0
+	for _, it := range m.feedQ {
+		if peerID > 0 && it.PeerID != peerID {
+			kept = append(kept, it)
+			continue
+		}
+		n++
+	}
+	m.feedQ = kept
+	return n, nil
+}
+
+func (m *Memory) FeedQueueStats(_ context.Context) (FeedQueueStats, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	st := FeedQueueStats{ByPeer: map[int64]int{}}
+	var oldest time.Time
+	for _, it := range m.feedQ {
+		st.ByPeer[it.PeerID]++
+		st.Depth++
+		if oldest.IsZero() || it.CreatedAt.Before(oldest) {
+			oldest = it.CreatedAt
+		}
+	}
+	if !oldest.IsZero() {
+		st.OldestAge = time.Since(oldest)
+	}
+	return st, nil
 }
 
 var (

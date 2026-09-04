@@ -273,6 +273,10 @@ func (p *Portal) readerPost(w http.ResponseWriter, r *http.Request, u store.User
 		writeJSON(w, http.StatusForbidden, map[string]string{"error": "posting not permitted"})
 		return
 	}
+	if ok, msg := p.ops.AcceptArticles(); !ok {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": msg})
+		return
+	}
 	var in posting.Input
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})

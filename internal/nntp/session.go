@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"strconv"
 	"strings"
 	"time"
@@ -17,6 +18,7 @@ import (
 	"openusenet/internal/cleanfeed"
 	"openusenet/internal/config"
 	"openusenet/internal/inbound"
+	"openusenet/internal/ops"
 	"openusenet/internal/peerauth"
 	"openusenet/internal/retention"
 	"openusenet/internal/store"
@@ -39,6 +41,7 @@ type Session struct {
 	log          *log.Logger
 	feeder       Feeder
 	paths        PathRecorder
+	ops          *ops.Controller
 	authUser     string
 	authUserID   int64
 	authOK       bool
@@ -52,11 +55,11 @@ type Feeder interface {
 	Offer(msgid, path string, groups []string, wire []byte)
 }
 
-func Serve(conn *Conn, st store.Store, mbox *archive.MBox, cfg config.Config, lg *log.Logger, feeder Feeder, paths PathRecorder) {
+func Serve(conn *Conn, st store.Store, mbox *archive.MBox, cfg config.Config, lg *log.Logger, feeder Feeder, paths PathRecorder, ctl *ops.Controller) {
 	if lg == nil {
 		lg = log.Default()
 	}
-	s := &Session{conn: conn, store: st, mbox: mbox, cfg: cfg, log: lg, feeder: feeder, paths: paths}
+	s := &Session{conn: conn, store: st, mbox: mbox, cfg: cfg, log: lg, feeder: feeder, paths: paths, ops: ctl}
 	defer func() { _ = conn.Close() }()
 	if err := conn.Reply(OKBannerPost, Software+" "+Version+" posting allowed"); err != nil {
 		return
@@ -693,9 +696,10 @@ func (s *Session) requireFeedAuth(ctx context.Context) error {
 	return nil
 }
 
-func (s *Session) filterArticle(raw []byte, rejectCode int) error {
+func (s *Session) filterArticle(raw []byte, rejectCode int, msgid string) error {
 	r := cleanfeed.Check(s.cfg.Cleanfeed, raw)
 	if r.Reject {
+		s.rememberReject(msgid)
 		return s.conn.Reply(rejectCode, r.Reason)
 	}
 	if r.Audit && s.log != nil {
@@ -704,8 +708,131 @@ func (s *Session) filterArticle(raw []byte, rejectCode int) error {
 	return nil
 }
 
+func (s *Session) rememberReject(msgid string) {
+	if !s.cfg.Limits.RememberRejects || msgid == "" || !article.ValidMessageID(msgid) {
+		return
+	}
+	if err := s.store.RememberMessageID(context.Background(), msgid); err != nil && s.log != nil {
+		s.log.Printf("remember reject %s: %v", msgid, err)
+	}
+}
+
+func (s *Session) refuseAccept(post bool) error {
+	if s.ops == nil {
+		return nil
+	}
+	ok, reason := s.ops.AcceptArticles()
+	if ok {
+		return nil
+	}
+	if reason == "" {
+		reason = "server paused"
+	}
+	if post {
+		return s.conn.Reply(FailPostReject, reason)
+	}
+	return s.conn.Reply(FailIHaveDefer, reason)
+}
+
+func (s *Session) checkCutoff(art *article.Article, rejectCode int) error {
+	if !article.TooOld(art.Get("Date"), s.cfg.Limits.ArtCutoffDays, time.Time{}) {
+		return nil
+	}
+	s.rememberReject(art.Get("Message-ID"))
+	return s.conn.Reply(rejectCode, "article too old")
+}
+
+func (s *Session) checkModerated(ctx context.Context, art *article.Article, rejectCode int) error {
+	approved := strings.TrimSpace(art.Get("Approved")) != ""
+	for _, name := range art.Newsgroups() {
+		g, err := s.store.GetGroup(ctx, name)
+		if err != nil || g == nil {
+			continue
+		}
+		if g.Status == "m" && !approved {
+			return s.conn.Reply(rejectCode, "moderated group requires Approved")
+		}
+	}
+	return nil
+}
+
+func (s *Session) handleControl(ctx context.Context, art *article.Article) (handled bool, err error) {
+	target := article.CancelTarget(art)
+	if target == "" {
+		target = article.SupersedesTarget(art)
+	}
+	if target == "" {
+		return false, nil
+	}
+	// Cancels always remember the target; remove article body if present.
+	existed, err := s.store.CancelMessageID(ctx, target)
+	if err != nil {
+		return true, err
+	}
+	// Also remember the cancel article's own Message-ID so it is not re-fed as content.
+	_ = s.store.RememberMessageID(ctx, art.Get("Message-ID"))
+	if s.log != nil {
+		s.log.Printf("cancel %s (existed=%v) via %s", target, existed, art.Get("Message-ID"))
+	}
+	return true, nil
+}
+
+func (s *Session) matchInboundPeer(ctx context.Context) *store.Peer {
+	peers, err := s.store.ListPeers(ctx)
+	if err != nil {
+		return nil
+	}
+	if s.feedAuthOK && s.feedAuthPeer > 0 {
+		for i := range peers {
+			if peers[i].ID == s.feedAuthPeer {
+				return &peers[i]
+			}
+		}
+	}
+	remote := s.conn.Remote()
+	host, _, _ := net.SplitHostPort(remote)
+	if host == "" {
+		host = remote
+	}
+	for i := range peers {
+		p := &peers[i]
+		if !p.Enabled {
+			continue
+		}
+		for _, h := range []string{p.IncomingHost, p.Host, p.Name} {
+			if h != "" && strings.EqualFold(h, host) {
+				return p
+			}
+		}
+	}
+	return nil
+}
+
+func (s *Session) checkPeerPatterns(peer *store.Peer, art *article.Article, rejectCode int) error {
+	if peer == nil {
+		return nil
+	}
+	pat := strings.TrimSpace(peer.Patterns)
+	if pat == "" {
+		pat = "*"
+	}
+	if wildmat.MatchAny(pat, art.Newsgroups()) {
+		return nil
+	}
+	s.rememberReject(art.Get("Message-ID"))
+	return s.conn.Reply(rejectCode, "newsgroups not wanted by peer subscription")
+}
+
 func cmdPost(s *Session, _ []string) error {
 	if err := s.requirePostAuth(); err != nil {
+		return err
+	}
+	if s.ops != nil {
+		if ok, msg := s.ops.AcceptReaders(); !ok {
+			return s.conn.Reply(FailPostAuth, msg)
+		}
+	}
+	if err := s.refuseAccept(true); err != nil {
 		return err
 	}
 	if err := s.conn.Reply(ContPost, "send article to be posted"); err != nil {
@@ -730,10 +857,23 @@ func cmdPost(s *Session, _ []string) error {
 		return s.conn.Reply(FailPostReject, err.Error())
 	}
 	wire := art.Wire()
-	if err := s.filterArticle(wire, FailPostReject); err != nil {
+	msgid := art.Get("Message-ID")
+	if err := s.filterArticle(wire, FailPostReject, msgid); err != nil {
+		return err
+	}
+	if err := s.checkCutoff(art, FailPostReject); err != nil {
 		return err
 	}
 	ctx := context.Background()
+	if handled, err := s.handleControl(ctx, art); handled {
+		if err != nil {
+			return err
+		}
+		return s.conn.Reply(OKPost, "cancel received "+msgid)
+	}
+	if err := s.checkModerated(ctx, art, FailPostReject); err != nil {
+		return err
+	}
 	isBin := binary.LooksBinary(art.RawHeaders, art.Body)
 	if isBin && s.authOK && s.authUserID > 0 {
 		limit := s.cfg.Retention.UserBinaryPostsPerDay
@@ -745,7 +885,7 @@ func cmdPost(s *Session, _ []string) error {
 			}
 		}
 	}
-	dup, err := s.store.HasMessageID(ctx, art.Get("Message-ID"))
+	dup, err := s.store.HasMessageID(ctx, msgid)
 	if err != nil {
 		return err
 	}
@@ -762,7 +902,7 @@ func cmdPost(s *Session, _ []string) error {
 	if _, err := s.store.NoteAccept(ctx, art.Newsgroups(), isBin, retention.FloodFromConfig(s.cfg)); err != nil && s.log != nil {
 		s.log.Printf("retention note: %v", err)
 	}
-	if err := s.conn.Reply(OKPost, "article received "+art.Get("Message-ID")); err != nil {
+	if err := s.conn.Reply(OKPost, "article received "+msgid); err != nil {
 		return err
 	}
 	s.offer(art, wire)
@@ -771,6 +911,14 @@ func cmdPost(s *Session, _ []string) error {
 
 func cmdIHave(s *Session, args []string) error {
 	ctx := context.Background()
+	if s.ops != nil {
+		if ok, msg := s.ops.AcceptPeers(); !ok {
+			return s.conn.Reply(FailIHaveDefer, msg)
+		}
+	}
+	if err := s.refuseAccept(false); err != nil {
+		return err
+	}
 	var peerHosts []string
 	if peers, err := s.store.ListPeers(ctx); err == nil {
 		peerHosts = store.PeerIHAVEHosts(peers)
@@ -798,26 +946,44 @@ func cmdIHave(s *Session, args []string) error {
 	raw, err := s.conn.ReadArticle(s.cfg.Limits.MaxArtSize)
 	if err != nil {
 		if IsTooLong(err) {
+			s.rememberReject(msgid)
 			return s.conn.Reply(FailIHaveReject, "article too large")
 		}
 		return err
 	}
 	art, err := article.Parse(raw)
 	if err != nil {
+		s.rememberReject(msgid)
 		return s.conn.Reply(FailIHaveReject, err.Error())
 	}
 	if err := article.InjectForIHave(art, article.InjectOpts{
 		Pathhost: s.cfg.Server.Pathhost,
 		Hostname: s.cfg.Server.Hostname,
 	}); err != nil {
+		s.rememberReject(msgid)
 		return s.conn.Reply(FailIHaveReject, err.Error())
 	}
 	wire := art.Wire()
-	if err := s.filterArticle(wire, FailIHaveReject); err != nil {
+	if err := s.filterArticle(wire, FailIHaveReject, msgid); err != nil {
 		return err
 	}
 	if !strings.EqualFold(art.Get("Message-ID"), msgid) {
+		s.rememberReject(msgid)
 		return s.conn.Reply(FailIHaveReject, "Message-ID does not match")
+	}
+	if err := s.checkCutoff(art, FailIHaveReject); err != nil {
+		return err
+	}
+	peer := s.matchInboundPeer(ctx)
+	if err := s.checkPeerPatterns(peer, art, FailIHaveReject); err != nil {
+		return err
+	}
+	if handled, err := s.handleControl(ctx, art); handled {
+		if err != nil {
+			s.log.Printf("ihave cancel %s: %v", msgid, err)
+			return s.conn.Reply(FailIHaveDefer, "try again later")
+		}
+		return s.conn.Reply(OKIHave, "cancel transferred "+msgid)
 	}
 	dup, err = s.store.HasMessageID(ctx, msgid)
 	if err != nil {
@@ -828,6 +994,7 @@ func cmdIHave(s *Session, args []string) error {
 	}
 	isBin := binary.LooksBinary(art.RawHeaders, art.Body)
 	if _, err := s.storeArticle(ctx, art, wire); errors.Is(err, store.ErrNoGroup) {
+		s.rememberReject(msgid)
 		return s.conn.Reply(FailIHaveReject, "newsgroup does not exist")
 	} else if errors.Is(err, store.ErrDuplicate) {
 		return s.conn.Reply(FailIHaveReject, "duplicate Message-ID")

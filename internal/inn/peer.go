@@ -194,7 +194,7 @@ func parseNewsfeedsFile(text string) (*Spec, []string) {
 				patterns = patField[:i]
 				distribs = patField[i+1:]
 			}
-			warns = appendUnique(warns, "newsfeeds stored for INN export; outbound IHAVE uses host/port only")
+			warns = appendUnique(warns, "patterns applied on offer/accept")
 			if strings.Contains(flags, "S") {
 				warns = appendUnique(warns, "streaming CHECK/TAKETHIS not supported yet")
 			}

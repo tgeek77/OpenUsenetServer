@@ -5,7 +5,8 @@ import (
 	"unicode/utf8"
 )
 
-// Match implements RFC 3977 section 4.
+// Match implements RFC 3977 section 4, plus INN newsfeeds `@` poison
+// patterns (treated like `!` for match purposes).
 func Match(wildmat, s string) bool {
 	if wildmat == "" {
 		return false
@@ -14,7 +15,7 @@ func Match(wildmat, s string) bool {
 	found := false
 	for _, p := range strings.Split(wildmat, ",") {
 		neg := false
-		if strings.HasPrefix(p, "!") {
+		if strings.HasPrefix(p, "!") || strings.HasPrefix(p, "@") {
 			neg = true
 			p = p[1:]
 		}
@@ -27,6 +28,34 @@ func Match(wildmat, s string) bool {
 		}
 	}
 	return found && matched
+}
+
+// MatchAny reports whether any of the strings match the wildmat.
+func MatchAny(wildmat string, ss []string) bool {
+	for _, s := range ss {
+		if Match(wildmat, s) {
+			return true
+		}
+	}
+	return false
+}
+
+// Poisoned reports whether s matches an `@` poison pattern in wildmat
+// (INN: exclude and remember Message-ID).
+func Poisoned(wildmat, s string) bool {
+	if wildmat == "" {
+		return false
+	}
+	for _, p := range strings.Split(wildmat, ",") {
+		if !strings.HasPrefix(p, "@") {
+			continue
+		}
+		p = p[1:]
+		if p != "" && matchPattern(p, s) {
+			return true
+		}
+	}
+	return false
 }
 
 func matchPattern(pat, s string) bool {
@@ -69,6 +98,7 @@ func Valid(w string) bool {
 	}
 	for _, p := range strings.Split(w, ",") {
 		p = strings.TrimPrefix(p, "!")
+		p = strings.TrimPrefix(p, "@")
 		if p == "" {
 			return false
 		}

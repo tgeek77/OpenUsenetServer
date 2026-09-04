@@ -57,6 +57,24 @@ type ExpireResult struct {
 	HistoryRemoved  int `json:"history_removed"`
 }
 
+// FeedQueueItem is a pending outbound IHAVE offer.
+type FeedQueueItem struct {
+	ID          int64     `json:"id"`
+	PeerID      int64     `json:"peer_id"`
+	MessageID   string    `json:"message_id"`
+	Attempts    int       `json:"attempts"`
+	NextAttempt time.Time `json:"next_attempt"`
+	LastError   string    `json:"last_error"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
+// FeedQueueStats summarizes outbound backlog.
+type FeedQueueStats struct {
+	Depth     int            `json:"depth"`
+	ByPeer    map[int64]int  `json:"by_peer,omitempty"`
+	OldestAge time.Duration  `json:"oldest_age_ns"`
+}
+
 var (
 	ErrQuotaExceeded = errors.New("binary post quota exceeded")
 )
@@ -109,6 +127,9 @@ type Store interface {
 	NewNews(ctx context.Context, wildmat string, since time.Time) ([]string, error)
 	NewGroups(ctx context.Context, since time.Time) ([]Group, error)
 	HasMessageID(ctx context.Context, msgid string) (bool, error)
+	RememberMessageID(ctx context.Context, msgid string) error
+	CancelMessageID(ctx context.Context, msgid string) (bool, error)
+	DeleteGroup(ctx context.Context, name string) error
 	CountArticles(ctx context.Context) (int, error)
 	RecentArticles(ctx context.Context, limit int) ([]StoredArticle, error)
 	SearchGroups(ctx context.Context, query string, busyOnly bool, limit int) ([]Group, error)
@@ -130,6 +151,13 @@ type Store interface {
 	UpdatePeer(ctx context.Context, peer Peer) (*Peer, error)
 	DeletePeer(ctx context.Context, id int64) error
 	CountPeers(ctx context.Context) (int, error)
+
+	EnqueueFeed(ctx context.Context, peerID int64, msgid string) error
+	ClaimFeedDue(ctx context.Context, limit int) ([]FeedQueueItem, error)
+	CompleteFeed(ctx context.Context, id int64) error
+	FailFeed(ctx context.Context, id int64, errMsg string, retryAfter time.Duration) error
+	FlushFeedQueue(ctx context.Context, peerID int64) (int, error)
+	FeedQueueStats(ctx context.Context) (FeedQueueStats, error)
 
 	ArticlesForGroup(ctx context.Context, group string) ([]StoredArticle, error)
 

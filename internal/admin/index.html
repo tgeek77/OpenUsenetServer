@@ -43,7 +43,7 @@ th { color: var(--muted); font-weight: 500; }
 .card .l { color: var(--muted); font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; }
 section.panel { background: var(--panel); border: 1px solid var(--line); padding: 0.85rem; margin-bottom: 1rem; }
 section.panel h2 { margin: 0 0 0.6rem; font-size: 1rem; }
-#admin { padding: 1rem 1.25rem 2rem; overflow: auto; flex: 1; }
+#admin, #ops, #stats { padding: 1rem 1.25rem 2rem; overflow: auto; flex: 1; }
 #reader { flex: 1; min-height: 0; display: grid; grid-template-columns: 220px 1fr 1.2fr; gap: 0; }
 @media (max-width: 960px) {
   #reader { grid-template-columns: 1fr; grid-template-rows: auto 40vh 1fr; }
@@ -128,6 +128,69 @@ section.panel h2 { margin: 0 0 0.6rem; font-size: 1rem; }
     </div>
   </div>
 </div>
+<main id="ops" class="hidden">
+  <div class="cards" id="opscards"></div>
+  <section class="panel">
+    <h2>Server mode <span class="mono" id="opsmode"></span></h2>
+    <p class="help">ctlinnd-style pause / throttle / go. Pause refuses new articles; throttle also refuses peer feeds. Watchdog may auto-change mode unless you override.</p>
+    <div class="row">
+      <input id="opsreason" placeholder="reason" size="28">
+      <button id="opspause">Pause</button>
+      <button id="opsthrottle">Throttle</button>
+      <button id="opsgo">Go</button>
+      <span class="mono" id="opsmsg"></span>
+    </div>
+    <div class="row">
+      <button class="secondary" id="opsreadersoff">Disable readers</button>
+      <button class="secondary" id="opsreaderson">Enable readers</button>
+      <button class="secondary" id="opspeersoff">Disable peer feeds</button>
+      <button class="secondary" id="opspeerson">Enable peer feeds</button>
+      <button class="secondary" id="opswdon">Watchdog on</button>
+      <button class="secondary" id="opswdoff">Watchdog off</button>
+    </div>
+  </section>
+  <section class="panel">
+    <h2>Maintenance</h2>
+    <p class="help">news.daily analogs: run expire now, cancel/poison Message-IDs, flush outbound feed queues.</p>
+    <div class="row">
+      <button id="opsexpire">Run expire now</button>
+      <button class="secondary" id="opsflushall">Flush all feed queues</button>
+      <span class="mono" id="opsmaint"></span>
+    </div>
+    <div class="row">
+      <input id="opscancelid" placeholder="&lt;message-id@host&gt;" size="36">
+      <button id="opscancel">Cancel article</button>
+      <button class="secondary" id="opsremember">Poison Message-ID</button>
+    </div>
+    <div class="row">
+      <input id="opsrmgroup" placeholder="group to remove" size="24">
+      <button class="secondary" id="opsrm">rmgroup</button>
+      <select id="opschgstat"><option value="y">y</option><option value="n">n</option><option value="m">m</option></select>
+      <input id="opschggroup" placeholder="group" size="20">
+      <button class="secondary" id="opschg">changegroup</button>
+    </div>
+  </section>
+</main>
+<main id="stats" class="hidden">
+  <div class="cards" id="statcards"></div>
+  <section class="panel">
+    <h2>Watchdog / health</h2>
+    <p class="mono" id="statwatch"></p>
+    <p class="help">innwatch-style: load, disk usage on the mbox volume, and feed queue depth can pause or throttle automatically.</p>
+  </section>
+  <section class="panel">
+    <h2>Feed queues</h2>
+    <p class="mono" id="statfeed"></p>
+    <table>
+      <thead><tr><th>Peer</th><th>Host</th><th>Patterns</th><th>Queue</th><th>Ping</th><th></th></tr></thead>
+      <tbody id="statpeers"></tbody>
+    </table>
+  </section>
+  <section class="panel">
+    <h2>Expire</h2>
+    <p class="mono" id="statexpire"></p>
+  </section>
+</main>
 <main id="admin" class="hidden">
   <div class="cards" id="cards"></div>
   <section class="panel">
@@ -323,6 +386,8 @@ function showAuth(setup) {
   $("authbox").classList.remove("hidden");
   $("reader").classList.add("hidden");
   $("admin").classList.add("hidden");
+  $("ops").classList.add("hidden");
+  $("stats").classList.add("hidden");
   $("nav").innerHTML = "";
   $("authbox").innerHTML = setup
     ? `<h2>Create first admin</h2><p class="help">This account can administer the server and use the newsreader.</p>
@@ -343,11 +408,14 @@ function showAuth(setup) {
 }
 
 function setMode(mode) {
-  const reader = mode === "reader";
-  $("reader").classList.toggle("hidden", !reader);
-  $("admin").classList.toggle("hidden", reader);
+  ["reader","ops","stats","admin"].forEach(m => {
+    const el = $(m);
+    if (el) el.classList.toggle("hidden", m !== mode);
+  });
   document.querySelectorAll(".navbtn").forEach(b => b.classList.toggle("active", b.dataset.mode === mode));
-  if (!reader) loadAdmin();
+  if (mode === "admin") loadAdmin();
+  if (mode === "ops") loadOps();
+  if (mode === "stats") loadStats();
 }
 
 async function boot() {
@@ -360,7 +428,11 @@ async function boot() {
     <button class="secondary" id="out">Sign out</button>`;
   $("out").onclick = async () => { await j("/api/logout",{method:"POST"}); location.reload(); };
   let nav = `<button class="navbtn active" data-mode="reader">Reader</button>`;
-  if (me.is_admin) nav += `<button class="navbtn" data-mode="admin">Admin</button>`;
+  if (me.is_admin) {
+    nav += `<button class="navbtn" data-mode="ops">Ops</button>`;
+    nav += `<button class="navbtn" data-mode="stats">Stats</button>`;
+    nav += `<button class="navbtn" data-mode="admin">Admin</button>`;
+  }
   $("nav").innerHTML = nav;
   $("nav").onclick = (e) => {
     const b = e.target.closest(".navbtn");
@@ -531,6 +603,98 @@ $("csend").onclick = async () => {
     const n = nums[g];
     if (n) await openArticle(n);
   } catch (e) { $("cmsg").textContent = e.message; }
+};
+
+// Ops / Stats
+async function opsAction(body) {
+  return j("/api/ops", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body)});
+}
+async function loadOps() {
+  const d = await j("/api/ops");
+  const o = d.ops || {};
+  $("opsmode").textContent = (o.mode || "?") + (o.reason ? (" — " + o.reason) : "") + " (" + (o.changed_by||"") + ")";
+  $("opscards").innerHTML = [
+    ["Mode", o.mode], ["Readers", o.readers_enabled?"on":"off"], ["Peers", o.peers_enabled?"on":"off"],
+    ["Watchdog", o.watchdog_enabled?"on":"off"], ["Queue", o.feed_queue_depth||0],
+    ["Load1", (o.load1||0).toFixed ? o.load1.toFixed(2) : o.load1],
+    ["Disk %", (o.disk_used_pct||0).toFixed ? o.disk_used_pct.toFixed(1) : o.disk_used_pct],
+  ].map(([l,n]) => `<div class="card"><div class="n">${esc(n)}</div><div class="l">${esc(l)}</div></div>`).join("");
+}
+async function loadStats() {
+  const s = await j("/api/stats");
+  const o = s.ops || {};
+  const q = s.feed_queue || {};
+  $("statcards").innerHTML = [
+    ["Groups", s.groups], ["Articles", s.articles], ["Uptime s", s.uptime_sec],
+    ["Feed OK", s.feed && s.feed.ok], ["Feed fail", s.feed && s.feed.fail],
+    ["Queue", q.depth||0], ["Mode", s.mode_label],
+  ].map(([l,n]) => `<div class="card"><div class="n">${esc(n)}</div><div class="l">${esc(l)}</div></div>`).join("");
+  const w = s.watchdog || {};
+  $("statwatch").textContent = `load1=${(o.load1||0).toFixed?.(2)??o.load1} disk=${(o.disk_used_pct||0).toFixed?.(1)??o.disk_used_pct}% ` +
+    `queue=${o.feed_queue_depth||0} · thresholds pause=${w.load_pause} throttle=${w.load_throttle} go=${w.load_go} disk%=${w.disk_throttle_pct} queue=${w.queue_throttle} · art_cutoff=${s.art_cutoff}d history=${s.history_days}d`;
+  $("statfeed").textContent = s.feed && s.feed.last ? ("last " + s.feed.last) : "no recent transfers";
+  $("statpeers").innerHTML = (s.peers||[]).map(p =>
+    `<tr><td class="mono">${esc(p.name||"")}</td><td class="mono">${esc(p.host)}</td><td class="mono">${esc(p.patterns||"*")}</td>
+     <td>${esc(p.queue||0)}</td><td><span class="dot ${p.up?"up":"down"}"></span>${p.enabled?(p.up?"up":"down"):"off"}</td>
+     <td><button class="secondary" data-flush="${p.id}">Flush queue</button></td></tr>`
+  ).join("") || `<tr><td colspan="6">No peers</td></tr>`;
+  $("statpeers").onclick = async (e) => {
+    const b = e.target.closest("button[data-flush]");
+    if (!b) return;
+    await opsAction({action:"flush_feed", peer_id: Number(b.dataset.flush)});
+    await loadStats();
+  };
+  const ex = o.expire_result;
+  $("statexpire").textContent = o.expire_last
+    ? (`last ${o.expire_last}` + (ex ? ` · overview=${ex.overview_removed} articles=${ex.articles_removed} history=${ex.history_removed}` : ""))
+    : "no expire run yet";
+}
+$("opspause").onclick = async () => { try { await opsAction({action:"pause", reason:$("opsreason").value}); $("opsmsg").textContent="paused"; await loadOps(); } catch(e){ $("opsmsg").textContent=e.message; } };
+$("opsthrottle").onclick = async () => { try { await opsAction({action:"throttle", reason:$("opsreason").value}); $("opsmsg").textContent="throttled"; await loadOps(); } catch(e){ $("opsmsg").textContent=e.message; } };
+$("opsgo").onclick = async () => { try { await opsAction({action:"go"}); $("opsmsg").textContent="running"; await loadOps(); } catch(e){ $("opsmsg").textContent=e.message; } };
+$("opsreadersoff").onclick = async () => { await opsAction({action:"readers", enabled:false, message:"readers disabled by admin"}); await loadOps(); };
+$("opsreaderson").onclick = async () => { await opsAction({action:"readers", enabled:true}); await loadOps(); };
+$("opspeersoff").onclick = async () => { await opsAction({action:"peers", enabled:false, message:"peer feeds disabled by admin"}); await loadOps(); };
+$("opspeerson").onclick = async () => { await opsAction({action:"peers", enabled:true}); await loadOps(); };
+$("opswdon").onclick = async () => { await opsAction({action:"watchdog", enabled:true}); await loadOps(); };
+$("opswdoff").onclick = async () => { await opsAction({action:"watchdog", enabled:false}); await loadOps(); };
+$("opsexpire").onclick = async () => {
+  try {
+    const d = await opsAction({action:"expire"});
+    $("opsmaint").textContent = `expire overview=${d.expire.overview_removed} articles=${d.expire.articles_removed} history=${d.expire.history_removed}`;
+    await loadOps();
+  } catch (e) { $("opsmaint").textContent = e.message; }
+};
+$("opsflushall").onclick = async () => {
+  try {
+    const d = await opsAction({action:"flush_feed", peer_id:0});
+    $("opsmaint").textContent = "flushed " + d.flushed;
+  } catch (e) { $("opsmaint").textContent = e.message; }
+};
+$("opscancel").onclick = async () => {
+  try {
+    const d = await opsAction({action:"cancel", message_id:$("opscancelid").value});
+    $("opsmaint").textContent = d.existed ? "cancelled" : "poisoned (not present)";
+  } catch (e) { $("opsmaint").textContent = e.message; }
+};
+$("opsremember").onclick = async () => {
+  try {
+    await opsAction({action:"remember", message_id:$("opscancelid").value});
+    $("opsmaint").textContent = "remembered";
+  } catch (e) { $("opsmaint").textContent = e.message; }
+};
+$("opsrm").onclick = async () => {
+  if (!confirm("Remove group " + $("opsrmgroup").value + "?")) return;
+  try {
+    await opsAction({action:"rmgroup", group:$("opsrmgroup").value});
+    $("opsmaint").textContent = "rmgroup ok";
+  } catch (e) { $("opsmaint").textContent = e.message; }
+};
+$("opschg").onclick = async () => {
+  try {
+    await opsAction({action:"changegroup", group:$("opschggroup").value, status:$("opschgstat").value});
+    $("opsmaint").textContent = "changegroup ok";
+  } catch (e) { $("opsmaint").textContent = e.message; }
 };
 
 // Admin

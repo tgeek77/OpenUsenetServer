@@ -38,6 +38,18 @@ retention:
 limits:
   max_art_size: 5000000
   idle_seconds: 180
+  art_cutoff_days: 10   # reject articles older than N days (0 disables)
+  remember_rejects: true # keep rejected Message-IDs in history
+
+# innwatch-style auto pause/throttle (Ops page can override).
+# watchdog:
+#   enabled: true
+#   interval_seconds: 60
+#   load_pause: 16
+#   load_throttle: 24
+#   load_go: 8
+#   disk_throttle_pct: 95
+#   queue_throttle: 5000
 
 # Extra groups beyond the ISC list (always seeded).
 groups:

@@ -20,10 +20,22 @@ type PeerSource interface {
 	ListEnabledPeers(ctx context.Context) ([]store.Peer, error)
 }
 
-// Feeder offers newly accepted articles to configured peers via IHAVE.
+// ArticleSource loads stored articles for outbound transfer.
+type ArticleSource interface {
+	GetByMsgID(ctx context.Context, msgid string) (*store.StoredArticle, error)
+	EnqueueFeed(ctx context.Context, peerID int64, msgid string) error
+	ClaimFeedDue(ctx context.Context, limit int) ([]store.FeedQueueItem, error)
+	CompleteFeed(ctx context.Context, id int64) error
+	FailFeed(ctx context.Context, id int64, errMsg string, retryAfter time.Duration) error
+	GetPeer(ctx context.Context, id int64) (*store.Peer, error)
+	FeedQueueStats(ctx context.Context) (store.FeedQueueStats, error)
+}
+
+// Feeder offers newly accepted articles to configured peers via durable queue + IHAVE.
 type Feeder struct {
 	cfg     config.Config
 	peers   PeerSource
+	arts    ArticleSource
 	log     *log.Logger
 	timeout time.Duration
 	offered atomic.Int64
@@ -32,17 +44,17 @@ type Feeder struct {
 	last    atomic.Value // string
 }
 
-func New(cfg config.Config, peers PeerSource, lg *log.Logger) *Feeder {
+func New(cfg config.Config, peers PeerSource, arts ArticleSource, lg *log.Logger) *Feeder {
 	if lg == nil {
 		lg = log.Default()
 	}
-	return &Feeder{cfg: cfg, peers: peers, log: lg, timeout: 15 * time.Second}
+	return &Feeder{cfg: cfg, peers: peers, arts: arts, log: lg, timeout: 15 * time.Second}
 }
 
-// Offer sends the article to peers whose host is not already in Path.
-// It returns immediately; transfers run in the background.
-func (f *Feeder) Offer(msgid, path string, groups []string, wire []byte) {
-	if f == nil || msgid == "" || len(wire) == 0 {
+// Offer enqueues the article for peers whose Path/patterns allow it.
+// Transfers run from RunWorker; wire is unused when the article is already stored.
+func (f *Feeder) Offer(msgid, path string, groups []string, _ []byte) {
+	if f == nil || msgid == "" || f.arts == nil {
 		return
 	}
 	var list []store.Peer
@@ -54,26 +66,90 @@ func (f *Feeder) Offer(msgid, path string, groups []string, wire []byte) {
 			return
 		}
 	}
-	if len(list) == 0 {
-		return
-	}
 	for _, p := range list {
-		p := p
 		if skipPeer(f.cfg, p, path) {
 			continue
 		}
-		go func() {
-			f.offered.Add(1)
-			if err := f.ihave(p, msgid, wire); err != nil {
-				f.fail.Add(1)
-				f.log.Printf("feed %s: %v", p.Addr(), err)
-				return
-			}
-			f.ok.Add(1)
-			f.last.Store(msgid + " -> " + p.Addr())
-		}()
+		if !PeerWants(p, groups) {
+			continue
+		}
+		if err := f.arts.EnqueueFeed(context.Background(), p.ID, msgid); err != nil {
+			f.log.Printf("feed enqueue %s -> %d: %v", msgid, p.ID, err)
+			continue
+		}
+		f.offered.Add(1)
 	}
-	_ = groups
+	// Kick an immediate drain so local tests and low-latency peers do not wait for the ticker.
+	go f.drainOnce(context.Background())
+}
+
+// RunWorker drains the durable feed queue until ctx is done.
+func (f *Feeder) RunWorker(ctx context.Context) {
+	if f == nil || f.arts == nil {
+		return
+	}
+	t := time.NewTicker(5 * time.Second)
+	defer t.Stop()
+	for {
+		f.drainOnce(ctx)
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+	}
+}
+
+func (f *Feeder) drainOnce(ctx context.Context) {
+	items, err := f.arts.ClaimFeedDue(ctx, 32)
+	if err != nil {
+		f.log.Printf("feed claim: %v", err)
+		return
+	}
+	for _, it := range items {
+		if err := f.deliver(ctx, it); err != nil {
+			f.fail.Add(1)
+			backoff := retryBackoff(it.Attempts)
+			_ = f.arts.FailFeed(ctx, it.ID, err.Error(), backoff)
+			f.log.Printf("feed %s peer=%d: %v (retry in %s)", it.MessageID, it.PeerID, err, backoff)
+			continue
+		}
+		_ = f.arts.CompleteFeed(ctx, it.ID)
+		f.ok.Add(1)
+		f.last.Store(fmt.Sprintf("%s -> peer %d", it.MessageID, it.PeerID))
+	}
+}
+
+func retryBackoff(attempts int) time.Duration {
+	d := time.Duration(attempts) * time.Minute
+	if d < 30*time.Second {
+		d = 30 * time.Second
+	}
+	if d > 30*time.Minute {
+		d = 30 * time.Minute
+	}
+	return d
+}
+
+func (f *Feeder) deliver(ctx context.Context, it store.FeedQueueItem) error {
+	peer, err := f.arts.GetPeer(ctx, it.PeerID)
+	if err != nil {
+		return err
+	}
+	if peer == nil || !peer.Enabled {
+		_ = f.arts.CompleteFeed(ctx, it.ID)
+		return nil
+	}
+	art, err := f.arts.GetByMsgID(ctx, it.MessageID)
+	if err != nil {
+		return err
+	}
+	if art == nil {
+		// Article cancelled/expired — drop quietly.
+		return nil
+	}
+	wire := []byte(art.Headers + "\r\n\r\n" + art.Body)
+	return f.ihave(*peer, it.MessageID, wire)
 }
 
 func skipPeer(cfg config.Config, p store.Peer, path string) bool {
@@ -81,10 +157,14 @@ func skipPeer(cfg config.Config, p store.Peer, path string) bool {
 	if host == "" {
 		return true
 	}
+	token := strings.TrimSpace(p.PathToken)
+	if token == "" {
+		token = host
+	}
 	if strings.EqualFold(host, cfg.Server.Hostname) || strings.EqualFold(host, cfg.Server.Pathhost) {
 		return true
 	}
-	if article.PathContains(path, host) {
+	if article.PathContains(path, host) || article.PathContains(path, token) {
 		return true
 	}
 	if article.PathContains(path, cfg.Server.Pathhost) && strings.EqualFold(host, cfg.Server.Pathhost) {
@@ -154,8 +234,13 @@ func (f *Feeder) ihave(p store.Peer, msgid string, wire []byte) error {
 		if code != nntp.OKIHave && code != nntp.FailIHaveRefuse && code != nntp.FailIHaveReject && code != nntp.FailIHaveDefer {
 			return fmt.Errorf("after transfer %s", line)
 		}
-	case nntp.FailIHaveRefuse, nntp.FailIHaveReject, nntp.FailIHaveDefer:
-		// peer already has it or does not want it
+		if code == nntp.FailIHaveDefer {
+			return fmt.Errorf("peer deferred: %s", line)
+		}
+	case nntp.FailIHaveRefuse, nntp.FailIHaveReject:
+		// peer already has it or does not want it — success for our queue
+	case nntp.FailIHaveDefer:
+		return fmt.Errorf("peer deferred: %s", line)
 	default:
 		return fmt.Errorf("IHAVE %s", line)
 	}

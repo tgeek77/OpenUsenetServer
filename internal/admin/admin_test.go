@@ -21,7 +21,7 @@ func TestSetupLoginAndAddGroup(t *testing.T) {
 	cfg := config.Defaults()
 	cfg.Server.Hostname = "news-a"
 	cfg.Peers = []config.Peer{{Host: "127.0.0.1", Port: 1}}
-	h := New(cfg, st, nil, nil, nil, nil).Handler()
+	h := New(cfg, st, nil, nil, nil, nil, nil).Handler()
 
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/", nil))

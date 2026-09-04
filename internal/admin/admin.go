@@ -27,6 +27,7 @@ import (
 	"openusenet/internal/inpaths"
 	"openusenet/internal/isc"
 	"openusenet/internal/nntp"
+	"openusenet/internal/ops"
 	"openusenet/internal/peerauth"
 	"openusenet/internal/store"
 )
@@ -40,6 +41,7 @@ type Portal struct {
 	mbox    *archive.MBox
 	feeder  *feed.Feeder
 	inpaths *inpaths.Logger
+	ops     *ops.Controller
 	sess    *auth.Sessions
 	started time.Time
 	jobsMu  sync.Mutex
@@ -47,12 +49,15 @@ type Portal struct {
 	log     *log.Logger
 }
 
-func New(cfg config.Config, st store.Store, mbox *archive.MBox, feeder *feed.Feeder, paths *inpaths.Logger, lg *log.Logger) *Portal {
+func New(cfg config.Config, st store.Store, mbox *archive.MBox, feeder *feed.Feeder, paths *inpaths.Logger, ctl *ops.Controller, lg *log.Logger) *Portal {
 	if lg == nil {
 		lg = log.Default()
 	}
+	if ctl == nil {
+		ctl = ops.New()
+	}
 	return &Portal{
-		cfg: cfg, st: st, mbox: mbox, feeder: feeder, inpaths: paths, sess: auth.NewSessions(),
+		cfg: cfg, st: st, mbox: mbox, feeder: feeder, inpaths: paths, ops: ctl, sess: auth.NewSessions(),
 		started: time.Now().UTC(), jobs: map[string]*store.ArchiveJob{}, log: lg,
 	}
 }
@@ -78,6 +83,8 @@ func (p *Portal) Handler() http.Handler {
 	mux.HandleFunc("/api/archive/import", p.withAuth(p.archiveImport, true))
 	mux.HandleFunc("/api/archive/jobs", p.withAuth(p.archiveJobs, true))
 	mux.HandleFunc("/api/alerts", p.withAuth(p.alerts, true))
+	mux.HandleFunc("/api/ops", p.withAuth(p.opsAPI, true))
+	mux.HandleFunc("/api/stats", p.withAuth(p.statsAPI, true))
 	mux.HandleFunc("/api/reader/", p.withAuth(p.reader, false))
 	return mux
 }
@@ -297,11 +304,18 @@ func (p *Portal) status(w http.ResponseWriter, r *http.Request, _ store.User) {
 		"mbox_dir":        p.cfg.Storage.MBoxDir,
 		"export_dir":      p.cfg.Archive.ExportDir,
 		"open_alerts":     len(openAlerts),
+		"ops":             p.ops.Snapshot(),
 		"retention": map[string]any{
 			"default_live_days":         p.cfg.Retention.EffectiveDefaultLiveDays(),
 			"flood_live_days":           p.cfg.Retention.FloodLiveDays,
 			"history_days":              p.cfg.Retention.HistoryDays,
 			"user_binary_posts_per_day": p.cfg.Retention.UserBinaryPostsPerDay,
+		},
+		"limits": map[string]any{
+			"max_art_size":      p.cfg.Limits.MaxArtSize,
+			"art_cutoff_days":   p.cfg.Limits.ArtCutoffDays,
+			"remember_rejects":  p.cfg.Limits.RememberRejects,
+			"idle_seconds":      p.cfg.Limits.IdleSeconds,
 		},
 		"inbound": map[string]any{
 			"open":              inbound.Open(p.cfg, peerHosts),

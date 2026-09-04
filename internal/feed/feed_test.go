@@ -25,3 +25,18 @@ func TestSkipPeer(t *testing.T) {
 		t.Fatal("empty host should skip")
 	}
 }
+
+func TestGroupsWanted(t *testing.T) {
+	if !GroupsWanted("*,@*.bina*,!local.*", []string{"comp.lang.go"}) {
+		t.Fatal("wanted")
+	}
+	if GroupsWanted("*,@*.bina*,!local.*", []string{"alt.binaries.foo"}) {
+		t.Fatal("binary poisoned")
+	}
+	if GroupsWanted("*,!local.*", []string{"local.test"}) {
+		t.Fatal("local excluded")
+	}
+	if !PeerWants(store.Peer{Patterns: ""}, []string{"any.group"}) {
+		t.Fatal("empty patterns = *")
+	}
+}

@@ -18,6 +18,7 @@ import (
 	"openusenet/internal/feed"
 	"openusenet/internal/inpaths"
 	"openusenet/internal/nntp"
+	"openusenet/internal/ops"
 	"openusenet/internal/peerauth"
 	"openusenet/internal/store"
 )
@@ -31,13 +32,18 @@ type Server struct {
 	log     *log.Logger
 	feeder  *feed.Feeder
 	inpaths *inpaths.Logger
+	ops     *ops.Controller
 }
 
 func New(cfg config.Config, st store.Store, mbox *archive.MBox, lg *log.Logger) *Server {
 	if lg == nil {
 		lg = log.Default()
 	}
-	s := &Server{cfg: cfg, st: st, mbox: mbox, log: lg, feeder: feed.New(cfg, st, lg)}
+	ctl := ops.New()
+	s := &Server{cfg: cfg, st: st, mbox: mbox, log: lg, feeder: feed.New(cfg, st, st, lg), ops: ctl}
+	if !cfg.Watchdog.IsEnabled() {
+		ctl.SetWatchdogEnabled(false)
+	}
 	if cfg.InpathsEnabled() {
 		pl, err := inpaths.NewLogger(cfg.InpathsDir())
 		if err != nil {
@@ -62,6 +68,8 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 	go s.runArchiveSchedule(ctx)
 	go s.runInpathsSchedule(ctx)
 	go s.runExpireSchedule(ctx)
+	go s.feeder.RunWorker(ctx)
+	go ops.NewWatchdog(s.cfg.Watchdog, s.ops, s.st, s.cfg.Storage.MBoxDir, s.log).Run(ctx)
 	if err := s.serveHTTP(ctx); err != nil {
 		return err
 	}
@@ -91,13 +99,13 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 		}
 		go func(c net.Conn) {
 			nc := nntp.NewConn(c, s.cfg.Idle())
-			nntp.Serve(nc, s.st, s.mbox, s.cfg, s.log, s.feeder, s.inpaths)
+			nntp.Serve(nc, s.st, s.mbox, s.cfg, s.log, s.feeder, s.inpaths, s.ops)
 		}(c)
 	}
 }
 
 func (s *Server) serveHTTP(ctx context.Context) error {
-	handler := admin.New(s.cfg, s.st, s.mbox, s.feeder, s.inpaths, s.log).Handler()
+	handler := admin.New(s.cfg, s.st, s.mbox, s.feeder, s.inpaths, s.ops, s.log).Handler()
 	if err := s.listenHTTP(ctx, s.cfg.Listen.HTTP, false, handler); err != nil {
 		return err
 	}
@@ -185,7 +193,7 @@ func (s *Server) serveNNTPTLS(ctx context.Context) error {
 			}
 			go func(c net.Conn) {
 				nc := nntp.NewConn(c, s.cfg.Idle())
-				nntp.Serve(nc, s.st, s.mbox, s.cfg, s.log, s.feeder, s.inpaths)
+				nntp.Serve(nc, s.st, s.mbox, s.cfg, s.log, s.feeder, s.inpaths, s.ops)
 			}(c)
 		}
 	}()
@@ -294,6 +302,7 @@ func (s *Server) runExpireSchedule(ctx context.Context) {
 			s.log.Printf("expire: %v", err)
 			return
 		}
+		s.ops.NoteExpire(res)
 		if res.OverviewRemoved > 0 || res.ArticlesRemoved > 0 || res.HistoryRemoved > 0 {
 			s.log.Printf("expire: overview=%d articles=%d history=%d",
 				res.OverviewRemoved, res.ArticlesRemoved, res.HistoryRemoved)
