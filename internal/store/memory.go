@@ -145,6 +145,88 @@ func (m *Memory) SearchGroups(_ context.Context, query string, busyOnly bool, li
 	return out, nil
 }
 
+func (m *Memory) SearchArticles(_ context.Context, query, group string, limit, offset int) ([]ArticleSearchHit, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return nil, nil
+	}
+	if limit <= 0 || limit > 100 {
+		limit = 50
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	group = strings.TrimSpace(group)
+	tokens := strings.Fields(strings.ToLower(query))
+	if len(tokens) == 0 {
+		return nil, nil
+	}
+	var hits []ArticleSearchHit
+	for _, art := range m.arts {
+		blob := strings.ToLower(art.Subject + " " + art.From + " " + art.Body)
+		ok := true
+		for _, tok := range tokens {
+			tok = strings.Trim(tok, `"'`)
+			if tok == "" {
+				continue
+			}
+			if strings.HasPrefix(tok, "-") {
+				if strings.Contains(blob, strings.TrimPrefix(tok, "-")) {
+					ok = false
+					break
+				}
+				continue
+			}
+			if !strings.Contains(blob, tok) {
+				ok = false
+				break
+			}
+		}
+		if !ok {
+			continue
+		}
+		var groups []string
+		var primary string
+		var num int64
+		for g, n := range art.groups {
+			groups = append(groups, g)
+			if group != "" && g == group {
+				primary, num = g, n
+			}
+		}
+		sort.Strings(groups)
+		if primary == "" && len(groups) > 0 {
+			primary = groups[0]
+			num = art.groups[primary]
+		}
+		if group != "" && primary != group {
+			continue
+		}
+		snippet := art.Body
+		if len(snippet) > 160 {
+			snippet = snippet[:160] + "…"
+		}
+		hits = append(hits, ArticleSearchHit{
+			MessageID: art.MessageID, Subject: art.Subject, From: art.From, Date: art.Date,
+			StoredAt: art.StoredAt.UTC().Format(time.RFC3339), Xref: art.Xref,
+			Groups: groups, Group: primary, Num: num, Rank: 1, Snippet: snippet,
+		})
+	}
+	sort.Slice(hits, func(i, j int) bool {
+		return hits[i].StoredAt > hits[j].StoredAt
+	})
+	if offset >= len(hits) {
+		return nil, nil
+	}
+	hits = hits[offset:]
+	if len(hits) > limit {
+		hits = hits[:limit]
+	}
+	return hits, nil
+}
+
 func (m *Memory) ListGroups(_ context.Context, wildmat string) ([]Group, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

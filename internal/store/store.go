@@ -133,6 +133,7 @@ type Store interface {
 	CountArticles(ctx context.Context) (int, error)
 	RecentArticles(ctx context.Context, limit int) ([]StoredArticle, error)
 	SearchGroups(ctx context.Context, query string, busyOnly bool, limit int) ([]Group, error)
+	SearchArticles(ctx context.Context, query, group string, limit, offset int) ([]ArticleSearchHit, error)
 	Post(ctx context.Context, headers, body, msgid, subject, from, date, refs, xref string, bytes, lines int, groups []string) (*PostResult, error)
 	Next(ctx context.Context, group string, cur int64) (*StoredArticle, error)
 	Prev(ctx context.Context, group string, cur int64) (*StoredArticle, error)

@@ -82,5 +82,16 @@ func TestReaderSubscribeOverviewPost(t *testing.T) {
 		t.Fatalf("%s", rr.Body.String())
 	}
 
+	rr = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "/api/reader/search?q=hi+there", nil)
+	req.AddCookie(cookie)
+	h.ServeHTTP(rr, req)
+	if rr.Code != 200 {
+		t.Fatal(rr.Body.String())
+	}
+	if !bytes.Contains(rr.Body.Bytes(), []byte(`"subject":"hello"`)) {
+		t.Fatalf("search: %s", rr.Body.String())
+	}
+
 	_ = auth.SessionCookie
 }

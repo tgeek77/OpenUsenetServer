@@ -50,7 +50,7 @@ Environment overrides include `OPENUSENET_HOSTNAME`, `OPENUSENET_LISTEN`, `OPENU
 
 ## Protocol (this release)
 
-Implements the RFC 3977 READER, POST, LIST, OVER, HDR, and NEWNEWS bundles, plus `XOVER`/`XHDR` aliases. `MODE READER` is accepted as a no-op. `IHAVE` is advertised. `AUTHINFO USER` is advertised. Streaming `CHECK`/`TAKETHIS` is not advertised yet.
+Implements the RFC 3977 READER, POST, LIST, OVER, HDR, and NEWNEWS bundles, plus `XOVER`/`XHDR` aliases. `MODE READER` is accepted as a no-op. `IHAVE` is advertised. `AUTHINFO USER` is advertised. Streaming `CHECK`/`TAKETHIS` is not advertised yet. The web newsreader includes PostgreSQL full-text search over subject/from/body.
 
 Inbound IHAVE can be limited with `inbound.allow` (hostnames / IPs / CIDRs). Empty allow list = all remotes.
 

@@ -19,6 +19,16 @@ orthogonal.
 - Message-ID **history** is pruned after `history_days` so expired binaries are not re-accepted forever.
 - Authenticated users may POST at most `user_binary_posts_per_day` (default 25) binary articles per UTC day. Text posts are unlimited. This is volume control for filesharing uploads, not content policing.
 
+## Full-text search
+
+The web newsreader can search article **subject**, **from**, and **body** via PostgreSQL
+full-text search (`websearch_to_tsquery`). Queries support phrases (`"exact words"`)
+and exclusions (`-spam`).
+
+On first migrate / startup after upgrade, Postgres adds a generated `search_tsv`
+column and a GIN index. That index grows with the corpus and can take noticeable
+disk and time after large archive imports. Selective group import keeps this manageable.
+
 ## Manual export
 
 ```bash

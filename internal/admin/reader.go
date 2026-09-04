@@ -26,6 +26,8 @@ func (p *Portal) reader(w http.ResponseWriter, r *http.Request, u store.User) {
 		p.readerUnsubscribe(w, r, u)
 	case path == "/groups" && r.Method == http.MethodGet:
 		p.readerSearchGroups(w, r, u)
+	case path == "/search" && r.Method == http.MethodGet:
+		p.readerSearchArticles(w, r, u)
 	case path == "/post" && r.Method == http.MethodPost:
 		p.readerPost(w, r, u)
 	case strings.HasPrefix(path, "/groups/"):
@@ -85,6 +87,26 @@ func (p *Portal) readerSearchGroups(w http.ResponseWriter, r *http.Request, _ st
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"groups": gs})
+}
+
+func (p *Portal) readerSearchArticles(w http.ResponseWriter, r *http.Request, _ store.User) {
+	q := strings.TrimSpace(r.URL.Query().Get("q"))
+	if q == "" {
+		writeJSON(w, http.StatusOK, map[string]any{"hits": []any{}, "q": q})
+		return
+	}
+	group := strings.TrimSpace(r.URL.Query().Get("group"))
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	offset, _ := strconv.Atoi(r.URL.Query().Get("offset"))
+	hits, err := p.st.SearchArticles(r.Context(), q, group, limit, offset)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	if hits == nil {
+		hits = []store.ArticleSearchHit{}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"hits": hits, "q": q, "group": group})
 }
 
 func (p *Portal) readerGroupPath(w http.ResponseWriter, r *http.Request, u store.User, rest string) {

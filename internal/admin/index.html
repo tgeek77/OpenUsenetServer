@@ -92,6 +92,14 @@ section.panel h2 { margin: 0 0 0.6rem; font-size: 1rem; }
       <button class="secondary" id="gfind">Find</button>
     </div>
     <div id="gfindres" class="hidden"></div>
+    <div class="toolbar">
+      <input id="aq" placeholder="search articles…" size="14">
+      <button class="secondary" id="afind">Search</button>
+    </div>
+    <label class="help" style="display:block;padding:0 0.75rem 0.35rem">
+      <input type="checkbox" id="asearchcur"> current group only
+    </label>
+    <div id="afindres" class="hidden"></div>
     <div id="subs"></div>
   </div>
   <div class="rcol">
@@ -472,6 +480,32 @@ $("gfindres").onclick = async (e) => {
   $("gfindres").classList.add("hidden");
   await loadSubs();
   await openGroup(b.dataset.sg);
+};
+
+$("afind").onclick = async () => {
+  const q = $("aq").value.trim();
+  if (!q) return;
+  const group = $("asearchcur").checked && curGroup ? encodeURIComponent(curGroup) : "";
+  const d = await j("/api/reader/search?q="+encodeURIComponent(q)+(group?"&group="+group:"")+"&limit=40");
+  $("afindres").classList.remove("hidden");
+  $("afindres").innerHTML = (d.hits||[]).map(h =>
+    `<button class="subitem" data-sg="${esc(h.group||"")}" data-n="${h.num||0}" data-mid="${esc(h.message_id)}">
+      <div>${esc(h.subject)}</div>
+      <div class="mono" style="color:var(--muted);font-size:0.75rem">${esc(h.from)} · ${esc(h.group||"")}</div>
+      <div class="help" style="margin:0;font-size:0.78rem">${esc(h.snippet||"")}</div>
+     </button>`
+  ).join("") || `<div class="help" style="padding:0.5rem">No matches</div>`;
+};
+$("aq").addEventListener("keydown", (e) => { if (e.key === "Enter") $("afind").click(); });
+$("afindres").onclick = async (e) => {
+  const b = e.target.closest("button[data-mid]");
+  if (!b) return;
+  const g = b.dataset.sg;
+  const n = Number(b.dataset.n);
+  if (g && n) {
+    await openGroup(g);
+    await openArticle(n);
+  }
 };
 
 function threadDepth(refs) {
