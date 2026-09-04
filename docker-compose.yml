@@ -15,7 +15,7 @@ services:
     restart: unless-stopped
 
   openusenet:
-    build: .
+    image: ${OPENUSENET_IMAGE:-jsevans/openusenet:latest}
     depends_on:
       postgres:
         condition: service_healthy

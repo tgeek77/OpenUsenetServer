@@ -16,7 +16,7 @@ Live text articles are kept indefinitely. Use [archive exports](docs/backup-and-
 cp .env.example .env
 # set OPENUSENET_HOSTNAME to your FQDN when you have one
 # optional first admin: OPENUSENET_BOOTSTRAP_ADMIN=admin:changeme
-docker compose up --build -d
+docker compose up -d
 printf 'CAPABILITIES\r\nQUIT\r\n' | nc -q 2 127.0.0.1 119
 # admin portal: http://127.0.0.1:8080/
 ```
