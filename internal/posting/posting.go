@@ -2,14 +2,17 @@ package posting
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"strings"
 
-	"github.com/openusenet/openusenet/internal/archive"
-	"github.com/openusenet/openusenet/internal/article"
-	"github.com/openusenet/openusenet/internal/config"
-	"github.com/openusenet/openusenet/internal/store"
+	"openusenet/internal/archive"
+	"openusenet/internal/article"
+	"openusenet/internal/binary"
+	"openusenet/internal/config"
+	"openusenet/internal/retention"
+	"openusenet/internal/store"
 )
 
 // Feeder is the outbound IHAVE interface used after accept.
@@ -28,7 +31,8 @@ type Input struct {
 }
 
 // Accept validates, injects, stores, appends mbox, and offers to peers.
-func Accept(ctx context.Context, cfg config.Config, st store.Store, mbox *archive.MBox, feeder Feeder, lg *log.Logger, in Input) (*store.PostResult, error) {
+// userID is used for the binary POST quota when > 0.
+func Accept(ctx context.Context, cfg config.Config, st store.Store, mbox *archive.MBox, feeder Feeder, lg *log.Logger, in Input, userID int64) (*store.PostResult, error) {
 	if lg == nil {
 		lg = log.Default()
 	}
@@ -76,6 +80,18 @@ func Accept(ctx context.Context, cfg config.Config, st store.Store, mbox *archiv
 	}); err != nil {
 		return nil, err
 	}
+	isBin := binary.LooksBinary(art.RawHeaders, art.Body)
+	if isBin && userID > 0 {
+		limit := cfg.Retention.UserBinaryPostsPerDay
+		if limit > 0 {
+			if _, err := st.ConsumeBinaryPostQuota(ctx, userID, limit); err != nil {
+				if errors.Is(err, store.ErrQuotaExceeded) {
+					return nil, fmt.Errorf("%w (%d/day)", store.ErrQuotaExceeded, limit)
+				}
+				return nil, err
+			}
+		}
+	}
 	msgid := art.Get("Message-ID")
 	dup, err := st.HasMessageID(ctx, msgid)
 	if err != nil {
@@ -91,6 +107,9 @@ func Accept(ctx context.Context, cfg config.Config, st store.Store, mbox *archiv
 		art.Bytes(), art.Lines(), art.Newsgroups())
 	if err != nil {
 		return nil, err
+	}
+	if _, err := st.NoteAccept(ctx, art.Newsgroups(), isBin, retention.FloodFromConfig(cfg)); err != nil {
+		lg.Printf("retention note: %v", err)
 	}
 	if mbox != nil {
 		art.Set("Xref", res.Xref)

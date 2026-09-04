@@ -8,10 +8,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/openusenet/openusenet/internal/article"
-	"github.com/openusenet/openusenet/internal/config"
-	"github.com/openusenet/openusenet/internal/nntp"
-	"github.com/openusenet/openusenet/internal/store"
+	"openusenet/internal/article"
+	"openusenet/internal/config"
+	"openusenet/internal/nntp"
+	"openusenet/internal/store"
 )
 
 func startTestServer(t *testing.T) (net.Conn, *store.Memory) {

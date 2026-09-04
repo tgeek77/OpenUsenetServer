@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/openusenet/openusenet/internal/store"
+	"openusenet/internal/store"
 )
 
 const SessionCookie = "ous_session"

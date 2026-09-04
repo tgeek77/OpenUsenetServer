@@ -8,7 +8,16 @@ OpenUsenet keeps articles in PostgreSQL indefinitely by default. Use **archive e
 - Written under `archive.export_dir/<UTC-timestamp>/`
 - Source of truth is PostgreSQL (not the live append-only `mbox_dir` spool)
 
-Exports never delete or expire live articles.
+Exports never delete or expire live articles. Separately, **retention** may expire
+bodies in groups that hit a binary-flood quota (see below); the export feature is
+orthogonal.
+
+## Retention (text forever, binary flood quotas)
+
+- Default: articles are kept **forever** (`default_live_days: 0`).
+- When a group receives a flood of binary-looking posts (yEnc / uuencode / bulk Base64 / binary MIME), it is auto-switched to a short live quota (`flood_live_days`, default 7) and an admin-portal **alert** asks you to block, whitelist, or dismiss.
+- Message-ID **history** is pruned after `history_days` so expired binaries are not re-accepted forever.
+- Authenticated users may POST at most `user_binary_posts_per_day` (default 25) binary articles per UTC day. Text posts are unlimited. This is volume control for filesharing uploads, not content policing.
 
 ## Manual export
 

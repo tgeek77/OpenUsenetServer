@@ -8,9 +8,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/openusenet/openusenet/internal/auth"
-	"github.com/openusenet/openusenet/internal/config"
-	"github.com/openusenet/openusenet/internal/store"
+	"openusenet/internal/auth"
+	"openusenet/internal/config"
+	"openusenet/internal/store"
 )
 
 func TestReaderSubscribeOverviewPost(t *testing.T) {

@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/openusenet/openusenet/internal/config"
+	"openusenet/internal/config"
 )
 
 // Result is a cleanfeed-ng filter verdict.

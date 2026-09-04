@@ -3,7 +3,7 @@ package peerauth
 import (
 	"testing"
 
-	"github.com/openusenet/openusenet/internal/store"
+	"openusenet/internal/store"
 )
 
 func TestPairPasswordSymmetric(t *testing.T) {

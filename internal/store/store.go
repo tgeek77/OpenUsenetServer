@@ -2,18 +2,65 @@ package store
 
 import (
 	"context"
+	"errors"
 	"time"
 )
 
 type Group struct {
-	Name        string    `json:"name"`
-	Description string    `json:"description"`
-	Status      string    `json:"status"` // y, n, m
-	Low         int64     `json:"low"`
-	High        int64     `json:"high"`
-	Count       int64     `json:"count"`
-	CreatedAt   time.Time `json:"created_at"`
+	Name           string    `json:"name"`
+	Description    string    `json:"description"`
+	Status         string    `json:"status"` // y, n, m
+	Low            int64     `json:"low"`
+	High           int64     `json:"high"`
+	Count          int64     `json:"count"`
+	CreatedAt      time.Time `json:"created_at"`
+	RetentionDays  *int      `json:"retention_days,omitempty"` // nil = inherit forever default
+	RetentionMode  string    `json:"retention_mode,omitempty"` // auto | manual | whitelist
 }
+
+const (
+	RetentionModeAuto      = "auto"
+	RetentionModeManual    = "manual"
+	RetentionModeWhitelist = "whitelist"
+)
+
+// GroupAlert is an admin review item (e.g. binary flood).
+type GroupAlert struct {
+	ID        int64     `json:"id"`
+	GroupName string    `json:"group_name"`
+	Kind      string    `json:"kind"`
+	Detail    string    `json:"detail"`
+	Status    string    `json:"status"` // open | blocked | whitelisted | dismissed
+	CreatedAt time.Time `json:"created_at"`
+}
+
+const (
+	AlertKindBinaryFlood = "binary_flood"
+	AlertOpen            = "open"
+	AlertBlocked         = "blocked"
+	AlertWhitelisted     = "whitelisted"
+	AlertDismissed       = "dismissed"
+)
+
+// FloodParams controls auto short-retention when a group is binary-flooded.
+type FloodParams struct {
+	Window       time.Duration
+	MinBinary    int
+	MinRatio     float64
+	FloodDays    int
+	SeedWildmat  string
+}
+
+// ExpireResult summarizes a retention pass.
+type ExpireResult struct {
+	OverviewRemoved int `json:"overview_removed"`
+	ArticlesRemoved int `json:"articles_removed"`
+	HistoryRemoved  int `json:"history_removed"`
+}
+
+var (
+	ErrQuotaExceeded = errors.New("binary post quota exceeded")
+)
 
 type OverviewRow struct {
 	Num      int64  `json:"num"`
@@ -92,6 +139,15 @@ type Store interface {
 	Unsubscribe(ctx context.Context, userID int64, group string) error
 	GetReadState(ctx context.Context, userID int64, group string) (int64, error)
 	SetReadState(ctx context.Context, userID int64, group string, lastReadNum int64) error
+
+	// Retention / binary flood / user quota
+	NoteAccept(ctx context.Context, groups []string, binary bool, flood FloodParams) ([]string, error)
+	ConsumeBinaryPostQuota(ctx context.Context, userID int64, limit int) (used int, err error)
+	BinaryPostQuotaUsed(ctx context.Context, userID int64) (int, error)
+	ListGroupAlerts(ctx context.Context, status string) ([]GroupAlert, error)
+	ResolveGroupAlert(ctx context.Context, id int64, action string) error
+	SetGroupRetention(ctx context.Context, name string, days *int, mode string) error
+	Expire(ctx context.Context, historyDays int) (ExpireResult, error)
 
 	Close() error
 }

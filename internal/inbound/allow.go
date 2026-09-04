@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/openusenet/openusenet/internal/config"
+	"openusenet/internal/config"
 )
 
 type dnsEntry struct {

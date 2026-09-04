@@ -7,8 +7,8 @@ import (
 	"net"
 	"strings"
 
-	"github.com/openusenet/openusenet/internal/inbound"
-	"github.com/openusenet/openusenet/internal/store"
+	"openusenet/internal/inbound"
+	"openusenet/internal/store"
 )
 
 // PairPassword returns a deterministic shared secret for two pathhosts (mesh/testing).

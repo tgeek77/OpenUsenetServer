@@ -3,7 +3,7 @@ package peerauth
 import (
 	"context"
 
-	"github.com/openusenet/openusenet/internal/store"
+	"openusenet/internal/store"
 )
 
 // EnsurePasswords fills empty peer passwords and persists updates.

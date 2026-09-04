@@ -11,15 +11,15 @@ import (
 	"strings"
 	"time"
 
-	"github.com/openusenet/openusenet/internal/admin"
-	"github.com/openusenet/openusenet/internal/archive"
-	"github.com/openusenet/openusenet/internal/auth"
-	"github.com/openusenet/openusenet/internal/config"
-	"github.com/openusenet/openusenet/internal/feed"
-	"github.com/openusenet/openusenet/internal/inpaths"
-	"github.com/openusenet/openusenet/internal/nntp"
-	"github.com/openusenet/openusenet/internal/peerauth"
-	"github.com/openusenet/openusenet/internal/store"
+	"openusenet/internal/admin"
+	"openusenet/internal/archive"
+	"openusenet/internal/auth"
+	"openusenet/internal/config"
+	"openusenet/internal/feed"
+	"openusenet/internal/inpaths"
+	"openusenet/internal/nntp"
+	"openusenet/internal/peerauth"
+	"openusenet/internal/store"
 )
 
 type Server struct {
@@ -61,6 +61,7 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 	}
 	go s.runArchiveSchedule(ctx)
 	go s.runInpathsSchedule(ctx)
+	go s.runExpireSchedule(ctx)
 	if err := s.serveHTTP(ctx); err != nil {
 		return err
 	}
@@ -272,6 +273,33 @@ func (s *Server) runInpathsSchedule(ctx context.Context) {
 		s.log.Printf("inpaths report sent to %v", s.cfg.InpathsMailTo())
 		_, _ = inpaths.PruneDumps(s.cfg.InpathsDir(), 7*24*time.Hour)
 	}
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			run()
+		}
+	}
+}
+
+func (s *Server) runExpireSchedule(ctx context.Context) {
+	every := time.Hour
+	s.log.Printf("retention expire schedule every %s (history_days=%d)", every, s.cfg.Retention.HistoryDays)
+	t := time.NewTicker(every)
+	defer t.Stop()
+	run := func() {
+		res, err := s.st.Expire(ctx, s.cfg.Retention.HistoryDays)
+		if err != nil {
+			s.log.Printf("expire: %v", err)
+			return
+		}
+		if res.OverviewRemoved > 0 || res.ArticlesRemoved > 0 || res.HistoryRemoved > 0 {
+			s.log.Printf("expire: overview=%d articles=%d history=%d",
+				res.OverviewRemoved, res.ArticlesRemoved, res.HistoryRemoved)
+		}
+	}
+	run()
 	for {
 		select {
 		case <-ctx.Done():

@@ -10,14 +10,14 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/openusenet/openusenet/internal/archive"
-	"github.com/openusenet/openusenet/internal/auth"
-	"github.com/openusenet/openusenet/internal/config"
-	"github.com/openusenet/openusenet/internal/inpaths"
-	"github.com/openusenet/openusenet/internal/isc"
-	"github.com/openusenet/openusenet/internal/nntp"
-	"github.com/openusenet/openusenet/internal/server"
-	"github.com/openusenet/openusenet/internal/store"
+	"openusenet/internal/archive"
+	"openusenet/internal/auth"
+	"openusenet/internal/config"
+	"openusenet/internal/inpaths"
+	"openusenet/internal/isc"
+	"openusenet/internal/nntp"
+	"openusenet/internal/server"
+	"openusenet/internal/store"
 )
 
 func main() {

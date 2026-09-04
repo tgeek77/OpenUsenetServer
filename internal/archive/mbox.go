@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/openusenet/openusenet/internal/article"
+	"openusenet/internal/article"
 )
 
 // MBox writes mboxrd files, one per newsgroup.

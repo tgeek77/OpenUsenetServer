@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/openusenet/openusenet/internal/store"
-	"github.com/openusenet/openusenet/internal/wildmat"
+	"openusenet/internal/store"
+	"openusenet/internal/wildmat"
 )
 
 // ExportResult is the outcome of one snapshot export.

@@ -7,8 +7,8 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/openusenet/openusenet/internal/posting"
-	"github.com/openusenet/openusenet/internal/store"
+	"openusenet/internal/posting"
+	"openusenet/internal/store"
 )
 
 func (p *Portal) reader(w http.ResponseWriter, r *http.Request, u store.User) {
@@ -281,7 +281,7 @@ func (p *Portal) readerPost(w http.ResponseWriter, r *http.Request, u store.User
 	if strings.TrimSpace(in.From) == "" {
 		in.From = u.Username + "@" + p.cfg.Server.Hostname
 	}
-	res, err := posting.Accept(r.Context(), p.cfg, p.st, p.mbox, p.feeder, p.log, in)
+	res, err := posting.Accept(r.Context(), p.cfg, p.st, p.mbox, p.feeder, p.log, in, u.ID)
 	if err != nil {
 		if errors.Is(err, store.ErrNoGroup) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "newsgroup does not exist"})
@@ -289,6 +289,10 @@ func (p *Portal) readerPost(w http.ResponseWriter, r *http.Request, u store.User
 		}
 		if errors.Is(err, store.ErrDuplicate) {
 			writeJSON(w, http.StatusConflict, map[string]string{"error": "duplicate Message-ID"})
+			return
+		}
+		if errors.Is(err, store.ErrQuotaExceeded) {
+			writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": err.Error()})
 			return
 		}
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})

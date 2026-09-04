@@ -228,6 +228,14 @@ section.panel h2 { margin: 0 0 0.6rem; font-size: 1rem; }
     </div>
   </div>
   <section class="panel">
+    <h2>Binary flood alerts <span id="alertbadge" class="mono"></span></h2>
+    <p class="help">Groups flooded with binary-looking traffic get a 7-day retention quota. Review to block, whitelist, or dismiss. Text groups stay forever by default. Authenticated users are limited to 25 binary POSTs/day.</p>
+    <table>
+      <thead><tr><th>When</th><th>Group</th><th>Detail</th><th></th></tr></thead>
+      <tbody id="alerts"></tbody>
+    </table>
+  </section>
+  <section class="panel">
     <h2>Users</h2>
     <div class="row">
       <input id="uname" placeholder="username" size="16">
@@ -271,7 +279,7 @@ section.panel h2 { margin: 0 0 0.6rem; font-size: 1rem; }
     </div>
     <p class="mono" id="gmsg"></p>
     <table>
-      <thead><tr><th>Name</th><th>Status</th><th>Count</th><th>High</th><th>Description</th></tr></thead>
+      <thead><tr><th>Name</th><th>Status</th><th>Retention</th><th>Count</th><th>High</th><th>Description</th></tr></thead>
       <tbody id="groups"></tbody>
     </table>
   </section>
@@ -714,8 +722,11 @@ async function loadStatus() {
   $("exsnippet").value = exportOurSide[$("exfile").value] || "";
   $("cards").innerHTML = [
     ["Groups", s.groups], ["Articles", s.articles], ["Peers", (s.peers||[]).length],
+    ["Open alerts", s.open_alerts||0],
     ["Feed OK", s.feed && s.feed.ok], ["Feed fail", s.feed && s.feed.fail],
   ].map(([l,n]) => `<div class="card"><div class="n">${esc(n)}</div><div class="l">${esc(l)}</div></div>`).join("");
+  $("alertbadge").textContent = (s.open_alerts||0) ? `(${s.open_alerts} open)` : "";
+  await loadAlerts();
   $("peers").innerHTML = (s.peer_status||[]).map(p =>
     `<tr><td><span class="dot ${p.up?"up":"down"}"></span>${p.enabled?(p.up?"up":"down"):"off"}</td>
      <td class="mono">${esc(p.name||"")}</td>
@@ -760,13 +771,41 @@ async function inpathsAction(action) {
 $("ipflush").onclick = () => inpathsAction("flush");
 $("ipreport").onclick = () => inpathsAction("report");
 $("ipsend").onclick = () => inpathsAction("send");
+async function loadAlerts() {
+  try {
+    const d = await j("/api/alerts?status=open");
+    $("alerts").innerHTML = (d.alerts||[]).map(a =>
+      `<tr><td class="mono">${esc(a.created_at)}</td><td class="mono">${esc(a.group_name)}</td><td>${esc(a.detail)}</td>
+       <td>
+         <button class="secondary" data-aid="${a.id}" data-act="block">Block</button>
+         <button class="secondary" data-aid="${a.id}" data-act="whitelist">Whitelist</button>
+         <button class="secondary" data-aid="${a.id}" data-act="dismiss">Dismiss</button>
+         <button class="secondary" data-aid="${a.id}" data-act="reset">Reset forever</button>
+       </td></tr>`
+    ).join("") || `<tr><td colspan="4">No open alerts</td></tr>`;
+    $("alerts").onclick = async (e) => {
+      const b = e.target.closest("button[data-aid]");
+      if (!b) return;
+      await j("/api/alerts", {method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({id: Number(b.dataset.aid), action: b.dataset.act})});
+      await loadStatus(); await loadGroups();
+    };
+  } catch (e) {
+    $("alerts").innerHTML = `<tr><td colspan="4">${esc(e.message)}</td></tr>`;
+  }
+}
+function retentionLabel(g) {
+  if (g.retention_mode === "whitelist") return "whitelisted";
+  if (g.retention_days != null && g.retention_days > 0) return g.retention_days + "d " + (g.retention_mode||"auto");
+  return "forever";
+}
 async function loadGroups() {
   const q = encodeURIComponent($("agq").value);
   const busy = $("busy").checked ? "1" : "0";
   const d = await j("/api/groups?q="+q+"&busy="+busy);
   $("groups").innerHTML = (d.groups||[]).map(g =>
-    `<tr><td class="mono">${esc(g.name)}</td><td>${esc(g.status)}</td><td>${esc(g.count)}</td><td>${esc(g.high)}</td><td>${esc(g.description)}</td></tr>`
-  ).join("") || `<tr><td colspan="5">No groups match</td></tr>`;
+    `<tr><td class="mono">${esc(g.name)}</td><td>${esc(g.status)}</td><td>${esc(retentionLabel(g))}</td><td>${esc(g.count)}</td><td>${esc(g.high)}</td><td>${esc(g.description)}</td></tr>`
+  ).join("") || `<tr><td colspan="6">No groups match</td></tr>`;
 }
 async function loadArts() {
   const d = await j("/api/articles");

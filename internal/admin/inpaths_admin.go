@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/openusenet/openusenet/internal/inpaths"
-	"github.com/openusenet/openusenet/internal/store"
+	"openusenet/internal/inpaths"
+	"openusenet/internal/store"
 )
 
 func (p *Portal) inpathsStatus() map[string]any {

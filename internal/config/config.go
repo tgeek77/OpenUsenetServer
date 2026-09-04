@@ -55,10 +55,36 @@ type Storage struct {
 	MBoxDir  string `yaml:"mbox_dir"` // live append-on-POST mbox spool
 }
 
-// Retention fields are documented but not enforced: live articles are kept indefinitely.
+// Retention controls article lifetime, binary-flood quotas, and user upload limits.
+// default_live_days 0 means keep forever (text default).
 type Retention struct {
-	LiveDays    int `yaml:"live_days"`
-	HistoryDays int `yaml:"history_days"`
+	DefaultLiveDays       int    `yaml:"default_live_days"` // 0 = forever
+	LiveDays              int    `yaml:"live_days"`         // deprecated alias for default_live_days
+	FloodLiveDays         int    `yaml:"flood_live_days"`
+	HistoryDays           int    `yaml:"history_days"`
+	UserBinaryPostsPerDay int    `yaml:"user_binary_posts_per_day"` // 0 disables
+	SeedBinaryWildmat     string `yaml:"seed_binary_wildmat"`
+	Flood                 Flood  `yaml:"flood"`
+}
+
+// Flood thresholds auto-apply FloodLiveDays retention to a group.
+type Flood struct {
+	WindowHours    int     `yaml:"window_hours"`
+	MinBinary      int     `yaml:"min_binary"`
+	MinBinaryRatio float64 `yaml:"min_binary_ratio"`
+}
+
+// EffectiveDefaultLiveDays returns the configured default (0 = forever).
+func (r Retention) EffectiveDefaultLiveDays() int {
+	if r.DefaultLiveDays > 0 {
+		return r.DefaultLiveDays
+	}
+	if r.LiveDays > 0 && r.DefaultLiveDays == 0 {
+		// Only treat live_days as default when default_live_days was omitted and
+		// an explicit positive live_days remains from older configs.
+		return 0
+	}
+	return r.DefaultLiveDays
 }
 
 type Limits struct {
@@ -196,8 +222,19 @@ func Defaults() Config {
 			Postgres: "postgres://openusenet:openusenet@127.0.0.1:5432/openusenet?sslmode=disable",
 			MBoxDir:  "./archive",
 		},
-		Retention: Retention{LiveDays: 30, HistoryDays: 60},
-		Limits:    Limits{MaxArtSize: 5_000_000, IdleSeconds: 180},
+		Retention: Retention{
+			DefaultLiveDays:       0,
+			FloodLiveDays:         7,
+			HistoryDays:           30,
+			UserBinaryPostsPerDay: 25,
+			SeedBinaryWildmat:     "*.bina*,*.bain*,*.dateien*,*.pictures*,alt.binaries.*",
+			Flood: Flood{
+				WindowHours:    24,
+				MinBinary:      20,
+				MinBinaryRatio: 0.5,
+			},
+		},
+		Limits: Limits{MaxArtSize: 5_000_000, IdleSeconds: 180},
 		GroupsSource: GroupsSource{
 			ISCURL: DefaultISCURL,
 		},
@@ -244,11 +281,26 @@ func Load(path string) (Config, error) {
 	if cfg.Limits.IdleSeconds <= 0 {
 		cfg.Limits.IdleSeconds = 180
 	}
-	if cfg.Retention.LiveDays <= 0 {
-		cfg.Retention.LiveDays = 30
+	if cfg.Retention.FloodLiveDays <= 0 {
+		cfg.Retention.FloodLiveDays = 7
 	}
 	if cfg.Retention.HistoryDays <= 0 {
-		cfg.Retention.HistoryDays = cfg.Retention.LiveDays * 2
+		cfg.Retention.HistoryDays = 30
+	}
+	if cfg.Retention.UserBinaryPostsPerDay < 0 {
+		cfg.Retention.UserBinaryPostsPerDay = 25
+	}
+	if cfg.Retention.Flood.WindowHours <= 0 {
+		cfg.Retention.Flood.WindowHours = 24
+	}
+	if cfg.Retention.Flood.MinBinary <= 0 {
+		cfg.Retention.Flood.MinBinary = 20
+	}
+	if cfg.Retention.Flood.MinBinaryRatio <= 0 {
+		cfg.Retention.Flood.MinBinaryRatio = 0.5
+	}
+	if strings.TrimSpace(cfg.Retention.SeedBinaryWildmat) == "" {
+		cfg.Retention.SeedBinaryWildmat = "*.bina*,*.bain*,*.dateien*,*.pictures*,alt.binaries.*"
 	}
 	if strings.TrimSpace(cfg.Archive.ExportDir) == "" {
 		cfg.Archive.ExportDir = "./exports"

@@ -10,15 +10,17 @@ import (
 	"strings"
 	"time"
 
-	"github.com/openusenet/openusenet/internal/archive"
-	"github.com/openusenet/openusenet/internal/article"
-	"github.com/openusenet/openusenet/internal/auth"
-	"github.com/openusenet/openusenet/internal/cleanfeed"
-	"github.com/openusenet/openusenet/internal/config"
-	"github.com/openusenet/openusenet/internal/inbound"
-	"github.com/openusenet/openusenet/internal/peerauth"
-	"github.com/openusenet/openusenet/internal/store"
-	"github.com/openusenet/openusenet/internal/wildmat"
+	"openusenet/internal/archive"
+	"openusenet/internal/article"
+	"openusenet/internal/auth"
+	"openusenet/internal/binary"
+	"openusenet/internal/cleanfeed"
+	"openusenet/internal/config"
+	"openusenet/internal/inbound"
+	"openusenet/internal/peerauth"
+	"openusenet/internal/retention"
+	"openusenet/internal/store"
+	"openusenet/internal/wildmat"
 )
 
 // PathRecorder logs Path headers for TOP1000 / inpaths statistics.
@@ -38,6 +40,7 @@ type Session struct {
 	feeder   Feeder
 	paths    PathRecorder
 	authUser      string
+	authUserID    int64
 	authOK        bool
 	feedAuthOK    bool
 	feedAuthPeer  int64
@@ -594,6 +597,7 @@ func cmdAuthinfo(s *Session, args []string) error {
 		s.pending = args[2]
 		s.authOK = false
 		s.authUser = ""
+		s.authUserID = 0
 		return s.conn.Reply(ContAuthPass, "PASSWORD required")
 	case "PASS":
 		if len(args) != 3 {
@@ -609,6 +613,7 @@ func cmdAuthinfo(s *Session, args []string) error {
 		}
 		if u != nil && !u.Disabled && auth.CheckPassword(u.PasswordHash, pass) {
 			s.authUser = u.Username
+			s.authUserID = u.ID
 			s.authOK = true
 			s.pending = ""
 			return s.conn.Reply(OKAuth, "Authentication accepted")
@@ -728,6 +733,17 @@ func cmdPost(s *Session, _ []string) error {
 		return err
 	}
 	ctx := context.Background()
+	isBin := binary.LooksBinary(art.RawHeaders, art.Body)
+	if isBin && s.authOK && s.authUserID > 0 {
+		limit := s.cfg.Retention.UserBinaryPostsPerDay
+		if limit > 0 {
+			if _, err := s.store.ConsumeBinaryPostQuota(ctx, s.authUserID, limit); errors.Is(err, store.ErrQuotaExceeded) {
+				return s.conn.Reply(FailPostReject, fmt.Sprintf("binary post quota exceeded (%d/day)", limit))
+			} else if err != nil {
+				return err
+			}
+		}
+	}
 	dup, err := s.store.HasMessageID(ctx, art.Get("Message-ID"))
 	if err != nil {
 		return err
@@ -742,6 +758,9 @@ func cmdPost(s *Session, _ []string) error {
 		return s.conn.Reply(FailPostReject, "duplicate Message-ID")
 	} else if err != nil {
 		return err
+	}
+	if _, err := s.store.NoteAccept(ctx, art.Newsgroups(), isBin, retention.FloodFromConfig(s.cfg)); err != nil && s.log != nil {
+		s.log.Printf("retention note: %v", err)
 	}
 	if err := s.conn.Reply(OKPost, "article received "+art.Get("Message-ID")); err != nil {
 		return err
@@ -807,6 +826,7 @@ func cmdIHave(s *Session, args []string) error {
 		return s.conn.Reply(FailIHaveReject, "duplicate Message-ID")
 	}
 	wire := art.Wire()
+	isBin := binary.LooksBinary(art.RawHeaders, art.Body)
 	if _, err := s.storeArticle(ctx, art, wire); errors.Is(err, store.ErrNoGroup) {
 		return s.conn.Reply(FailIHaveReject, "newsgroup does not exist")
 	} else if errors.Is(err, store.ErrDuplicate) {
@@ -814,6 +834,9 @@ func cmdIHave(s *Session, args []string) error {
 	} else if err != nil {
 		s.log.Printf("ihave store %s: %v", msgid, err)
 		return s.conn.Reply(FailIHaveDefer, "try again later")
+	}
+	if _, err := s.store.NoteAccept(ctx, art.Newsgroups(), isBin, retention.FloodFromConfig(s.cfg)); err != nil && s.log != nil {
+		s.log.Printf("retention note: %v", err)
 	}
 	if err := s.conn.Reply(OKIHave, "article transferred "+msgid); err != nil {
 		return err

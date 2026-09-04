@@ -3,8 +3,8 @@ package feed
 import (
 	"testing"
 
-	"github.com/openusenet/openusenet/internal/config"
-	"github.com/openusenet/openusenet/internal/store"
+	"openusenet/internal/config"
+	"openusenet/internal/store"
 )
 
 func TestSkipPeer(t *testing.T) {

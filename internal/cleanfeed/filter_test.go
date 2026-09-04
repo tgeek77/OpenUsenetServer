@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/openusenet/openusenet/internal/config"
+	"openusenet/internal/config"
 )
 
 func TestMissingCommandReject(t *testing.T) {

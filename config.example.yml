@@ -21,10 +21,19 @@ storage:
   postgres: postgres://openusenet:openusenet@127.0.0.1:5432/openusenet?sslmode=disable
   mbox_dir: ./archive # live append-on-POST spool (not IA exports)
 
-# Not enforced: live articles are kept indefinitely. Use archive exports for snapshots.
+# Not enforced as a global delete: text stays forever (default_live_days: 0).
+# Groups flooded with binary-looking traffic get flood_live_days retention + admin alert.
+# Authenticated users may POST at most user_binary_posts_per_day binary articles (UTC day).
 retention:
-  live_days: 30
-  history_days: 60
+  default_live_days: 0
+  flood_live_days: 7
+  history_days: 30
+  user_binary_posts_per_day: 25
+  seed_binary_wildmat: "*.bina*,*.bain*,*.dateien*,*.pictures*,alt.binaries.*"
+  flood:
+    window_hours: 24
+    min_binary: 20
+    min_binary_ratio: 0.5
 
 limits:
   max_art_size: 5000000

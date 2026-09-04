@@ -3,7 +3,7 @@ package store
 import (
 	"strings"
 
-	"github.com/openusenet/openusenet/internal/inn"
+	"openusenet/internal/inn"
 )
 
 func (p Peer) Normalize() Peer {

@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/openusenet/openusenet/internal/archive"
-	"github.com/openusenet/openusenet/internal/store"
+	"openusenet/internal/archive"
+	"openusenet/internal/store"
 )
 
 func TestExportGzip(t *testing.T) {

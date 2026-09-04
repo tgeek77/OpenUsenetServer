@@ -6,9 +6,9 @@ You do **not** need `inn.conf`, `incoming.conf`, `newsfeeds`, or `ctlinnd`.
 
 ## Status
 
-Phase 1+: RFC 3977 **reader** on port 119 (POST, OVER, groups, live mbox spool) plus RFC 3977 **IHAVE** to DB-backed peers, **AUTHINFO USER/PASS**, an **admin portal**, and a web **newsreader** (subscriptions, threaded overview, compose/reply). Optional TLS for NNTP/HTTP. MFA and streaming feeds come later.
+Phase 1+: RFC 3977 **reader** on port 119 (POST, OVER, groups, live mbox spool) plus RFC 3977 **IHAVE** to DB-backed peers, **AUTHINFO USER/PASS**, an **admin portal**, and a web **newsreader** (subscriptions, threaded overview, compose/reply). Optional TLS for NNTP/HTTP. Text articles are kept indefinitely; groups flooded with binary traffic get a short retention quota and an admin review alert. Authenticated users are limited to 25 binary POSTs/day. MFA and streaming feeds come later.
 
-Live articles are kept indefinitely. Use [archive exports](docs/backup-and-archive.md) (`*.mbox.gz`) for Internet Archive / offsite snapshots.
+Live text articles are kept indefinitely. Use [archive exports](docs/backup-and-archive.md) (`*.mbox.gz`) for Internet Archive / offsite snapshots.
 
 ## Quick start (Docker Compose)
 

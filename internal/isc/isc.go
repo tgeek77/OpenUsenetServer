@@ -12,13 +12,13 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/openusenet/openusenet/internal/article"
-	"github.com/openusenet/openusenet/internal/store"
+	"openusenet/internal/article"
+	"openusenet/internal/store"
 )
 
 const (
 	DefaultURL = "https://ftp.isc.org/usenet/CONFIG"
-	UserAgent  = "OpenUsenetServer/0.1.0 (Usenet config; +https://github.com/openusenet/openusenet)"
+	UserAgent  = "OpenUsenetServer/0.1.0 (Usenet config; +https://openusenet)"
 )
 
 // Fetch downloads ISC active + newsgroups (gzip preferred) and merges them.

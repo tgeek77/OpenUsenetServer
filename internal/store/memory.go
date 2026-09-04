@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	wmat "github.com/openusenet/openusenet/internal/wildmat"
+	wmat "openusenet/internal/wildmat"
 )
 
 type memGroup struct {
@@ -33,8 +33,12 @@ type Memory struct {
 	peers   map[int64]*Peer
 	nextUID int64
 	nextPID int64
+	nextAID int64
 	subs    map[int64]map[string]time.Time // userID -> group -> subscribed_at
 	reads   map[int64]map[string]int64     // userID -> group -> last_read_num
+	accepts map[string][]memAccept
+	alerts  []memAlert
+	binQuota map[string]int
 }
 
 func NewMemory() *Memory {
@@ -343,9 +347,11 @@ func (m *Memory) Post(_ context.Context, headers, body, msgid, subject, from, da
 	}
 	var used []string
 	for _, g := range groups {
-		if _, ok := m.groups[g]; ok {
-			used = append(used, g)
+		mg, ok := m.groups[g]
+		if !ok || mg.Status == "n" {
+			continue
 		}
+		used = append(used, g)
 	}
 	if len(used) == 0 {
 		return nil, ErrNoGroup

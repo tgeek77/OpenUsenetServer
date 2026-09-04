@@ -10,7 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
-	wmat "github.com/openusenet/openusenet/internal/wildmat"
+	wmat "openusenet/internal/wildmat"
 )
 
 const schema = `
@@ -117,6 +117,10 @@ func OpenPostgres(ctx context.Context, url string) (*Postgres, error) {
 		return nil, fmt.Errorf("postgres schema: %w", err)
 	}
 	if err := p.migratePeers(ctx); err != nil {
+		pool.Close()
+		return nil, err
+	}
+	if err := p.migrateRetention(ctx); err != nil {
 		pool.Close()
 		return nil, err
 	}
@@ -246,7 +250,7 @@ func (p *Postgres) SearchGroups(ctx context.Context, query string, busyOnly bool
 	if limit > 500 {
 		limit = 500
 	}
-	q := `SELECT name, description, status, low, high, count, created_at FROM newsgroups WHERE 1=1`
+	q := `SELECT ` + groupSelectCols + ` FROM newsgroups WHERE 1=1`
 	args := []any{}
 	if busyOnly {
 		q += ` AND count > 0`
@@ -265,7 +269,7 @@ func (p *Postgres) SearchGroups(ctx context.Context, query string, busyOnly bool
 	var out []Group
 	for rows.Next() {
 		var g Group
-		if err := rows.Scan(&g.Name, &g.Description, &g.Status, &g.Low, &g.High, &g.Count, &g.CreatedAt); err != nil {
+		if err := rows.Scan(&g.Name, &g.Description, &g.Status, &g.Low, &g.High, &g.Count, &g.CreatedAt, &g.RetentionDays, &g.RetentionMode); err != nil {
 			return nil, err
 		}
 		out = append(out, g)
@@ -274,7 +278,7 @@ func (p *Postgres) SearchGroups(ctx context.Context, query string, busyOnly bool
 }
 
 func (p *Postgres) ListGroups(ctx context.Context, wildmat string) ([]Group, error) {
-	rows, err := p.pool.Query(ctx, `SELECT name, description, status, low, high, count, created_at FROM newsgroups ORDER BY name`)
+	rows, err := p.pool.Query(ctx, `SELECT `+groupSelectCols+` FROM newsgroups ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -282,7 +286,7 @@ func (p *Postgres) ListGroups(ctx context.Context, wildmat string) ([]Group, err
 	var out []Group
 	for rows.Next() {
 		var g Group
-		if err := rows.Scan(&g.Name, &g.Description, &g.Status, &g.Low, &g.High, &g.Count, &g.CreatedAt); err != nil {
+		if err := rows.Scan(&g.Name, &g.Description, &g.Status, &g.Low, &g.High, &g.Count, &g.CreatedAt, &g.RetentionDays, &g.RetentionMode); err != nil {
 			return nil, err
 		}
 		if wildmat != "" && !wmat.Match(wildmat, g.Name) {
@@ -295,8 +299,8 @@ func (p *Postgres) ListGroups(ctx context.Context, wildmat string) ([]Group, err
 
 func (p *Postgres) GetGroup(ctx context.Context, name string) (*Group, error) {
 	var g Group
-	err := p.pool.QueryRow(ctx, `SELECT name, description, status, low, high, count, created_at FROM newsgroups WHERE name=$1`, name).
-		Scan(&g.Name, &g.Description, &g.Status, &g.Low, &g.High, &g.Count, &g.CreatedAt)
+	err := p.pool.QueryRow(ctx, `SELECT `+groupSelectCols+` FROM newsgroups WHERE name=$1`, name).
+		Scan(&g.Name, &g.Description, &g.Status, &g.Low, &g.High, &g.Count, &g.CreatedAt, &g.RetentionDays, &g.RetentionMode)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
@@ -499,7 +503,7 @@ func (p *Postgres) NewNews(ctx context.Context, wildmat string, since time.Time)
 }
 
 func (p *Postgres) NewGroups(ctx context.Context, since time.Time) ([]Group, error) {
-	rows, err := p.pool.Query(ctx, `SELECT name, description, status, low, high, count, created_at FROM newsgroups WHERE created_at >= $1 ORDER BY name`, since)
+	rows, err := p.pool.Query(ctx, `SELECT `+groupSelectCols+` FROM newsgroups WHERE created_at >= $1 ORDER BY name`, since)
 	if err != nil {
 		return nil, err
 	}
@@ -507,7 +511,7 @@ func (p *Postgres) NewGroups(ctx context.Context, since time.Time) ([]Group, err
 	var out []Group
 	for rows.Next() {
 		var g Group
-		if err := rows.Scan(&g.Name, &g.Description, &g.Status, &g.Low, &g.High, &g.Count, &g.CreatedAt); err != nil {
+		if err := rows.Scan(&g.Name, &g.Description, &g.Status, &g.Low, &g.High, &g.Count, &g.CreatedAt, &g.RetentionDays, &g.RetentionMode); err != nil {
 			return nil, err
 		}
 		out = append(out, g)
@@ -549,12 +553,16 @@ func (p *Postgres) Post(ctx context.Context, headers, body, msgid, subject, from
 	var used []ginfo
 	for _, name := range groups {
 		var id, high int64
-		err := tx.QueryRow(ctx, `SELECT id, high FROM newsgroups WHERE name=$1 FOR UPDATE`, name).Scan(&id, &high)
+		var status string
+		err := tx.QueryRow(ctx, `SELECT id, high, status FROM newsgroups WHERE name=$1 FOR UPDATE`, name).Scan(&id, &high, &status)
 		if errors.Is(err, pgx.ErrNoRows) {
 			continue
 		}
 		if err != nil {
 			return nil, err
+		}
+		if status == "n" {
+			continue // blocked / no-posting
 		}
 		high++
 		if _, err := tx.Exec(ctx, `UPDATE newsgroups SET high=$1, low=CASE WHEN low=0 THEN $1 ELSE low END, count=count+1 WHERE id=$2`, high, id); err != nil {

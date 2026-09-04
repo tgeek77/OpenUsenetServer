@@ -12,18 +12,18 @@ import (
 	"sync"
 	"time"
 
-	"github.com/openusenet/openusenet/internal/archive"
-	"github.com/openusenet/openusenet/internal/article"
-	"github.com/openusenet/openusenet/internal/auth"
-	"github.com/openusenet/openusenet/internal/config"
-	"github.com/openusenet/openusenet/internal/feed"
-	"github.com/openusenet/openusenet/internal/inbound"
-	"github.com/openusenet/openusenet/internal/inpaths"
-	"github.com/openusenet/openusenet/internal/inn"
-	"github.com/openusenet/openusenet/internal/isc"
-	"github.com/openusenet/openusenet/internal/nntp"
-	"github.com/openusenet/openusenet/internal/peerauth"
-	"github.com/openusenet/openusenet/internal/store"
+	"openusenet/internal/archive"
+	"openusenet/internal/article"
+	"openusenet/internal/auth"
+	"openusenet/internal/config"
+	"openusenet/internal/feed"
+	"openusenet/internal/inbound"
+	"openusenet/internal/inpaths"
+	"openusenet/internal/inn"
+	"openusenet/internal/isc"
+	"openusenet/internal/nntp"
+	"openusenet/internal/peerauth"
+	"openusenet/internal/store"
 )
 
 //go:embed index.html
@@ -71,6 +71,7 @@ func (p *Portal) Handler() http.Handler {
 	mux.HandleFunc("/api/inpaths", p.withAuth(p.inpathsAPI, true))
 	mux.HandleFunc("/api/archive", p.withAuth(p.archiveAPI, true))
 	mux.HandleFunc("/api/archive/jobs", p.withAuth(p.archiveJobs, true))
+	mux.HandleFunc("/api/alerts", p.withAuth(p.alerts, true))
 	mux.HandleFunc("/api/reader/", p.withAuth(p.reader, false))
 	return mux
 }
@@ -269,6 +270,7 @@ func (p *Portal) status(w http.ResponseWriter, r *http.Request, _ store.User) {
 		ps = append(ps, st)
 	}
 	peerHosts := store.PeerIHAVEHosts(peers)
+	openAlerts, _ := p.st.ListGroupAlerts(ctx, store.AlertOpen)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"software":     nntp.Software,
 		"version":      nntp.Version,
@@ -288,6 +290,13 @@ func (p *Portal) status(w http.ResponseWriter, r *http.Request, _ store.User) {
 		"postgres":     redactURL(p.cfg.Storage.Postgres),
 		"mbox_dir":     p.cfg.Storage.MBoxDir,
 		"export_dir":   p.cfg.Archive.ExportDir,
+		"open_alerts":  len(openAlerts),
+		"retention": map[string]any{
+			"default_live_days":         p.cfg.Retention.EffectiveDefaultLiveDays(),
+			"flood_live_days":           p.cfg.Retention.FloodLiveDays,
+			"history_days":              p.cfg.Retention.HistoryDays,
+			"user_binary_posts_per_day": p.cfg.Retention.UserBinaryPostsPerDay,
+		},
 		"inbound": map[string]any{
 			"open":               inbound.Open(p.cfg, peerHosts),
 			"allow":              p.cfg.Inbound.Allow,
@@ -826,4 +835,40 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 
 func writeErr(w http.ResponseWriter, err error) {
 	writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+}
+
+func (p *Portal) alerts(w http.ResponseWriter, r *http.Request, _ store.User) {
+	switch r.Method {
+	case http.MethodGet:
+		status := r.URL.Query().Get("status")
+		if status == "" {
+			status = store.AlertOpen
+		}
+		list, err := p.st.ListGroupAlerts(r.Context(), status)
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"alerts": list})
+	case http.MethodPost:
+		var in struct {
+			ID     int64  `json:"id"`
+			Action string `json:"action"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		if in.ID <= 0 || strings.TrimSpace(in.Action) == "" {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "id and action required"})
+			return
+		}
+		if err := p.st.ResolveGroupAlert(r.Context(), in.ID, in.Action); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+	default:
+		w.WriteHeader(http.StatusMethodNotAllowed)
+	}
 }

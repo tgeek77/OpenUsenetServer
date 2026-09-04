@@ -1,4 +1,4 @@
-module github.com/openusenet/openusenet
+module openusenet
 
 go 1.25
 

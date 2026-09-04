@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/openusenet/openusenet/internal/config"
-	"github.com/openusenet/openusenet/internal/server"
-	"github.com/openusenet/openusenet/internal/store"
+	"openusenet/internal/config"
+	"openusenet/internal/server"
+	"openusenet/internal/store"
 )
 
 func waitAddr(t *testing.T, srv *server.Server) net.Addr {

@@ -3,7 +3,7 @@ package inbound
 import (
 	"testing"
 
-	"github.com/openusenet/openusenet/internal/config"
+	"openusenet/internal/config"
 )
 
 func TestAllowedEmptyAndCIDR(t *testing.T) {
