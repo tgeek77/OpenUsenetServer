@@ -58,13 +58,14 @@ groups_source:
 #   - host: news-c
 #     port: 119
 
-# Who may IHAVE to us (INN incoming.conf model).
-# - require_peer_auth: true — only configured peers, must AUTHINFO PASS first (password: in incoming.conf).
-# - With no allow list and no peers configured: all remotes (dev default).
-# - With peers in the admin UI: enabled peer hostnames are allowed (DNS-resolved).
-# - Set open: false to reject everyone not listed below or configured as a peer.
+# Who may IHAVE to us.
+# - Default (no inbound block): open to all remotes (dev).
+# - Peers in the admin UI: enabled peer hostnames are always allowed.
+# - Optional AUTHINFO: set a peer incoming password only when you want that peer to authenticate.
+# - require_peer_auth: true — refuse IHAVE unless the remote matches a configured peer.
+# - open: false — refuse everyone not listed in allow or configured as a peer.
 # inbound:
-#   require_peer_auth: true
+#   require_peer_auth: false
 #   open: false
 #   allow:
 #     - 192.168.1.0/24

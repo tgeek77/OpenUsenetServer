@@ -28,6 +28,23 @@ openusenet archive export --groups 'misc.test*' --dir ./exports --config config.
 
 Or use **Archive export** in the admin portal (requires admin login).
 
+## Import (historical mbox)
+
+Load old articles from plain `.mbox` / `.mbox.gz` (mbox or mboxrd) into PostgreSQL.
+Duplicate Message-IDs are skipped. Peers are not offered imported articles.
+
+**Admin portal:** Archive import (file upload, admins only).
+
+```bash
+openusenet archive import ~/temp/news.groups.mbox --config config.yml
+openusenet archive import ~/temp/*.mbox --config config.yml
+openusenet archive import dump.mbox.gz --group alt.fan.usenet --restrict-group
+```
+
+Newsgroups come from each article’s `Newsgroups` header. If missing, the filename
+(`alt.fan.usenet.mbox` → `alt.fan.usenet`) or `--group` is used. Pass
+`--spool` to also append to the live `mbox_dir` spool.
+
 ## Automatic export
 
 In `config.yml`:

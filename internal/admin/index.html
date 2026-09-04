@@ -192,8 +192,8 @@ section.panel h2 { margin: 0 0 0.6rem; font-size: 1rem; }
         <label>Patterns <input id="ppatterns" placeholder="*,@*.bina*,!local*"></label>
         <label>Distributions <input id="pdist" placeholder="!local"></label>
         <label>Flags <input id="pflags" placeholder="Ap,Tm"></label>
-        <label>Incoming password (they AUTHINFO to us) <input id="pinpass" type="password" autocomplete="new-password" placeholder="auto from pathhosts"></label>
-        <label>Outgoing password (we AUTHINFO to them) <input id="poutpass" type="password" autocomplete="new-password" placeholder="auto from pathhosts"></label>
+		<label>Incoming password (they AUTHINFO to us) <input id="pinpass" type="password" autocomplete="new-password" placeholder="optional"></label>
+        <label>Outgoing password (we AUTHINFO to them) <input id="poutpass" type="password" autocomplete="new-password" placeholder="optional"></label>
         <label>Notes <input id="pnotes"></label>
       </div>
       <h3>INN file</h3>
@@ -258,8 +258,20 @@ section.panel h2 { margin: 0 0 0.6rem; font-size: 1rem; }
       <button id="aexport">Export now</button>
       <span class="mono" id="amsg"></span>
     </div>
+    <h2>Archive import</h2>
+    <p class="help">Load historical <code>.mbox</code> / <code>.mbox.gz</code> (admins only). Duplicate Message-IDs are skipped; peers are not offered imported articles.</p>
+    <div class="row">
+      <input id="afiles" type="file" multiple accept=".mbox,.gz,.mbox.gz,application/gzip,application/octet-stream">
+    </div>
+    <div class="row">
+      <input id="agroup" placeholder="fallback/restrict group (optional)" size="28">
+      <label><input type="checkbox" id="arestrict"> restrict to group</label>
+      <label><input type="checkbox" id="aspool"> also append to live spool</label>
+      <button id="aimport">Import</button>
+      <span class="mono" id="aimsg"></span>
+    </div>
     <table>
-      <thead><tr><th>ID</th><th>Status</th><th>Selector</th><th>Dir / error</th><th>Groups</th><th>Articles</th></tr></thead>
+      <thead><tr><th>ID</th><th>Kind</th><th>Status</th><th>Selector / files</th><th>Dir / error</th><th>Groups</th><th>Articles</th></tr></thead>
       <tbody id="ajobs"></tbody>
     </table>
   </section>
@@ -703,7 +715,7 @@ async function loadStatus() {
   const ib = s.inbound || {};
   const warn = $("inboundwarn");
   if (ib.require_peer_auth) {
-    warn.textContent = "Inbound IHAVE requires configured peers to AUTHINFO (INN incoming.conf password model).";
+    warn.textContent = "require_peer_auth is on: only configured peers may IHAVE, and they must AUTHINFO when a peer password is set.";
     warn.classList.remove("hidden");
   } else if (ib.open) {
     warn.textContent = "Inbound IHAVE is wide open — any host may push articles. Add peers and/or inbound.allow in config.yml before production.";
@@ -828,10 +840,15 @@ async function loadUsers() {
 }
 async function loadJobs() {
   const d = await j("/api/archive/jobs");
-  $("ajobs").innerHTML = (d.jobs||[]).map(j =>
-    `<tr><td class="mono">${esc(j.id)}</td><td>${esc(j.status)}</td><td class="mono">${esc(j.selector)}</td>
-     <td class="mono">${esc(j.error||j.dir||"")}</td><td>${esc(j.groups)}</td><td>${esc(j.articles)}</td></tr>`
-  ).join("") || `<tr><td colspan="6">No export jobs</td></tr>`;
+  $("ajobs").innerHTML = (d.jobs||[]).map(j => {
+    const kind = j.kind || "export";
+    const detail = j.error || (kind === "import"
+      ? `in=${j.imported||0} dup=${j.duplicates||0} skip=${j.skipped||0} scan=${j.scanned||0}`
+      : (j.dir||""));
+    return `<tr><td class="mono">${esc(j.id)}</td><td>${esc(kind)}</td><td>${esc(j.status)}</td>
+     <td class="mono">${esc(j.selector)}</td><td class="mono">${esc(detail)}</td>
+     <td>${esc(j.groups)}</td><td>${esc(j.articles)}</td></tr>`;
+  }).join("") || `<tr><td colspan="7">No archive jobs</td></tr>`;
 }
 $("gsearch").onclick = loadGroups;
 $("gadd").onclick = async () => {
@@ -867,6 +884,38 @@ $("aexport").onclick = async () => {
     $("amsg").textContent = "job " + d.job.id;
     setTimeout(loadJobs, 800);
   } catch (e) { $("amsg").textContent = e.message; }
+};
+$("aimport").onclick = async () => {
+  const input = $("afiles");
+  if (!input.files || !input.files.length) {
+    $("aimsg").textContent = "choose one or more .mbox files";
+    return;
+  }
+  const fd = new FormData();
+  for (const f of input.files) fd.append("files", f);
+  if ($("agroup").value.trim()) fd.append("group", $("agroup").value.trim());
+  if ($("arestrict").checked) fd.append("restrict_group", "1");
+  if ($("aspool").checked) fd.append("spool", "1");
+  $("aimsg").textContent = "uploading…";
+  try {
+    const d = await j("/api/archive/import", {method:"POST", body: fd});
+    $("aimsg").textContent = "job " + d.job.id;
+    const poll = async (n) => {
+      await loadJobs();
+      if (n <= 0) return;
+      const jobs = (await j("/api/archive/jobs")).jobs || [];
+      const job = jobs.find(x => x.id === d.job.id);
+      if (job && (job.status === "running" || job.status === "pending")) {
+        setTimeout(() => poll(n - 1), 500);
+      } else if (job) {
+        $("aimsg").textContent = job.status === "done"
+          ? `done imported=${job.imported||0} duplicates=${job.duplicates||0} skipped=${job.skipped||0}`
+          : (job.error || job.status);
+        await loadGroups(); await loadArts(); await loadStatus();
+      }
+    };
+    setTimeout(() => poll(40), 400);
+  } catch (e) { $("aimsg").textContent = e.message; }
 };
 $("arts").addEventListener("click", async (e) => {
   const tr = e.target.closest("tr[data-id]");

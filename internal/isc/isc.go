@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"openusenet/internal/article"
 	"openusenet/internal/store"
@@ -163,17 +162,5 @@ func ParseNewsgroups(r io.Reader) (map[string]string, error) {
 // sanitizeUTF8 makes ISC descriptions safe for PostgreSQL UTF-8.
 // Invalid sequences are treated as ISO-8859-1.
 func sanitizeUTF8(s string) string {
-	if utf8.ValidString(s) {
-		return strings.ToValidUTF8(s, "")
-	}
-	b := []byte(s)
-	var out strings.Builder
-	out.Grow(len(b))
-	for _, c := range b {
-		if c < 0x20 && c != '\t' {
-			continue
-		}
-		out.WriteRune(rune(c))
-	}
-	return out.String()
+	return article.SanitizeUTF8(s)
 }

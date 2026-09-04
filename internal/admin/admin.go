@@ -4,9 +4,14 @@ import (
 	"context"
 	_ "embed"
 	"encoding/json"
+	"fmt"
+	"io"
 	"log"
+	"mime/multipart"
 	"net"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -70,6 +75,7 @@ func (p *Portal) Handler() http.Handler {
 	mux.HandleFunc("/api/peers/our-side", p.withAuth(p.peersOurSide, true))
 	mux.HandleFunc("/api/inpaths", p.withAuth(p.inpathsAPI, true))
 	mux.HandleFunc("/api/archive", p.withAuth(p.archiveAPI, true))
+	mux.HandleFunc("/api/archive/import", p.withAuth(p.archiveImport, true))
 	mux.HandleFunc("/api/archive/jobs", p.withAuth(p.archiveJobs, true))
 	mux.HandleFunc("/api/alerts", p.withAuth(p.alerts, true))
 	mux.HandleFunc("/api/reader/", p.withAuth(p.reader, false))
@@ -750,6 +756,99 @@ func (p *Portal) archiveAPI(w http.ResponseWriter, r *http.Request, _ store.User
 	writeJSON(w, http.StatusOK, map[string]any{"job": job})
 }
 
+const maxArchiveImportBytes = 512 << 20 // 512 MiB
+
+func (p *Portal) archiveImport(w http.ResponseWriter, r *http.Request, _ store.User) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxArchiveImportBytes)
+	if err := r.ParseMultipartForm(64 << 20); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "multipart: " + err.Error()})
+		return
+	}
+	defer func() {
+		if r.MultipartForm != nil {
+			_ = r.MultipartForm.RemoveAll()
+		}
+	}()
+	var headers []*multipart.FileHeader
+	if r.MultipartForm != nil {
+		headers = append(headers, r.MultipartForm.File["files"]...)
+		headers = append(headers, r.MultipartForm.File["file"]...)
+	}
+	if len(headers) == 0 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "no files (form field: files)"})
+		return
+	}
+	group := strings.TrimSpace(r.FormValue("group"))
+	restrict := formTruthy(r.FormValue("restrict_group"))
+	spool := formTruthy(r.FormValue("spool"))
+	createGroups := true
+	if v := r.FormValue("create_groups"); v != "" {
+		createGroups = formTruthy(v)
+	}
+	if restrict && group == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "restrict_group requires group"})
+		return
+	}
+	dir, err := os.MkdirTemp("", "ous-import-*")
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	var paths []string
+	var names []string
+	for _, fh := range headers {
+		name := filepath.Base(fh.Filename)
+		if name == "" || name == "." || name == ".." {
+			_ = os.RemoveAll(dir)
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid filename"})
+			return
+		}
+		dst := filepath.Join(dir, name)
+		if err := saveUpload(fh, dst); err != nil {
+			_ = os.RemoveAll(dir)
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": name + ": " + err.Error()})
+			return
+		}
+		paths = append(paths, dst)
+		names = append(names, name)
+	}
+	opt := archive.ImportOpts{
+		Group:         group,
+		RestrictGroup: restrict,
+		CreateGroups:  createGroups,
+		Hostname:      p.cfg.Server.Hostname,
+	}
+	if spool {
+		opt.Spool = p.mbox
+	}
+	job := p.startImportJob(names, paths, dir, opt)
+	writeJSON(w, http.StatusOK, map[string]any{"job": job})
+}
+
+func saveUpload(fh *multipart.FileHeader, dst string) error {
+	src, err := fh.Open()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = src.Close() }()
+	out, err := os.Create(dst)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = out.Close() }()
+	_, err = io.Copy(out, src)
+	return err
+}
+
+func formTruthy(v string) bool {
+	v = strings.TrimSpace(strings.ToLower(v))
+	return v == "1" || v == "true" || v == "yes" || v == "on"
+}
+
 func (p *Portal) archiveJobs(w http.ResponseWriter, r *http.Request, _ store.User) {
 	p.jobsMu.Lock()
 	defer p.jobsMu.Unlock()
@@ -764,7 +863,7 @@ func (p *Portal) archiveJobs(w http.ResponseWriter, r *http.Request, _ store.Use
 func (p *Portal) startArchiveJob(selector string) *store.ArchiveJob {
 	id := strconv.FormatInt(time.Now().UnixNano(), 36)
 	job := &store.ArchiveJob{
-		ID: id, Status: "running", Selector: selector,
+		ID: id, Kind: "export", Status: "running", Selector: selector,
 		Dir: p.cfg.Archive.ExportDir, Started: time.Now().UTC(),
 	}
 	p.jobsMu.Lock()
@@ -786,6 +885,62 @@ func (p *Portal) startArchiveJob(selector string) *store.ArchiveJob {
 		job.Groups = res.Groups
 		job.Articles = res.Articles
 		_ = archive.PruneOldExports(p.cfg.Archive.ExportDir, p.cfg.Archive.RetainGens)
+	}()
+	return job
+}
+
+func (p *Portal) startImportJob(names, paths []string, workDir string, opt archive.ImportOpts) *store.ArchiveJob {
+	id := strconv.FormatInt(time.Now().UnixNano(), 36)
+	job := &store.ArchiveJob{
+		ID: id, Kind: "import", Status: "running",
+		Selector: strings.Join(names, ", "),
+		Files:    names,
+		Dir:      workDir,
+		Started:  time.Now().UTC(),
+	}
+	p.jobsMu.Lock()
+	p.jobs[id] = job
+	p.jobsMu.Unlock()
+	go func() {
+		defer func() { _ = os.RemoveAll(workDir) }()
+		ctx := context.Background()
+		var total archive.ImportResult
+		total.Groups = map[string]int{}
+		var firstErr error
+		for i, path := range paths {
+			fileOpt := opt
+			if fileOpt.Group == "" {
+				fileOpt.Group = archive.GroupFromMBoxPath(names[i])
+			}
+			res, err := archive.ImportFile(ctx, p.st, path, fileOpt)
+			if err != nil {
+				firstErr = fmt.Errorf("%s: %w", names[i], err)
+				break
+			}
+			total.Scanned += res.Scanned
+			total.Imported += res.Imported
+			total.Duplicates += res.Duplicates
+			total.Skipped += res.Skipped
+			for g, n := range res.Groups {
+				total.Groups[g] += n
+			}
+		}
+		p.jobsMu.Lock()
+		defer p.jobsMu.Unlock()
+		job.Finished = time.Now().UTC()
+		job.Scanned = total.Scanned
+		job.Imported = total.Imported
+		job.Duplicates = total.Duplicates
+		job.Skipped = total.Skipped
+		job.Articles = total.Imported
+		job.Groups = len(total.Groups)
+		if firstErr != nil {
+			job.Status = "error"
+			job.Error = firstErr.Error()
+			return
+		}
+		job.Status = "done"
+		job.Dir = ""
 	}()
 	return job
 }

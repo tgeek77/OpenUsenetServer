@@ -8,7 +8,7 @@ You do **not** need `inn.conf`, `incoming.conf`, `newsfeeds`, or `ctlinnd`.
 
 Phase 1+: RFC 3977 **reader** on port 119 (POST, OVER, groups, live mbox spool) plus RFC 3977 **IHAVE** to DB-backed peers, **AUTHINFO USER/PASS**, an **admin portal**, and a web **newsreader** (subscriptions, threaded overview, compose/reply). Optional TLS for NNTP/HTTP. Text articles are kept indefinitely; groups flooded with binary traffic get a short retention quota and an admin review alert. Authenticated users are limited to 25 binary POSTs/day. MFA and streaming feeds come later.
 
-Live text articles are kept indefinitely. Use [archive exports](docs/backup-and-archive.md) (`*.mbox.gz`) for Internet Archive / offsite snapshots.
+Live text articles are kept indefinitely. Use [archive exports](docs/backup-and-archive.md) (`*.mbox.gz`) for Internet Archive / offsite snapshots, or `openusenet archive import` to load historical mbox dumps.
 
 ## Quick start (Docker Compose)
 
@@ -62,7 +62,7 @@ Inbound IHAVE can be limited with `inbound.allow` (hostnames / IPs / CIDRs). Emp
 | `internal/nntp` | RFC 3977 session |
 | `internal/store` | PostgreSQL (and in-memory tests) |
 | `internal/admin` | Admin portal |
-| `internal/archive` | Live mbox spool + mbox.gz exports |
+| `internal/archive` | Live mbox spool + mbox.gz export/import |
 | `docs/backup-and-archive.md` | Backup / IA notes |
 | `config.example.yml` | Local config |
 

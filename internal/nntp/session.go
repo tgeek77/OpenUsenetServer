@@ -729,7 +729,8 @@ func cmdPost(s *Session, _ []string) error {
 	}); err != nil {
 		return s.conn.Reply(FailPostReject, err.Error())
 	}
-	if err := s.filterArticle(raw, FailPostReject); err != nil {
+	wire := art.Wire()
+	if err := s.filterArticle(wire, FailPostReject); err != nil {
 		return err
 	}
 	ctx := context.Background()
@@ -751,7 +752,6 @@ func cmdPost(s *Session, _ []string) error {
 	if dup {
 		return s.conn.Reply(FailPostReject, "duplicate Message-ID")
 	}
-	wire := art.Wire()
 	if _, err := s.storeArticle(ctx, art, wire); errors.Is(err, store.ErrNoGroup) {
 		return s.conn.Reply(FailPostReject, "newsgroup does not exist")
 	} else if errors.Is(err, store.ErrDuplicate) {
@@ -812,7 +812,8 @@ func cmdIHave(s *Session, args []string) error {
 	}); err != nil {
 		return s.conn.Reply(FailIHaveReject, err.Error())
 	}
-	if err := s.filterArticle(raw, FailIHaveReject); err != nil {
+	wire := art.Wire()
+	if err := s.filterArticle(wire, FailIHaveReject); err != nil {
 		return err
 	}
 	if !strings.EqualFold(art.Get("Message-ID"), msgid) {
@@ -825,7 +826,6 @@ func cmdIHave(s *Session, args []string) error {
 	if dup {
 		return s.conn.Reply(FailIHaveReject, "duplicate Message-ID")
 	}
-	wire := art.Wire()
 	isBin := binary.LooksBinary(art.RawHeaders, art.Body)
 	if _, err := s.storeArticle(ctx, art, wire); errors.Is(err, store.ErrNoGroup) {
 		return s.conn.Reply(FailIHaveReject, "newsgroup does not exist")

@@ -57,14 +57,19 @@ func (p Peer) Addr() string {
 }
 
 type ArchiveJob struct {
-	ID       string    `json:"id"`
-	Status   string    `json:"status"` // pending, running, done, error
-	Selector string    `json:"selector"`
-	Dir      string    `json:"dir"`
-	Files    []string  `json:"files,omitempty"`
-	Error    string    `json:"error,omitempty"`
-	Started  time.Time `json:"started_at"`
-	Finished time.Time `json:"finished_at,omitempty"`
-	Groups   int       `json:"groups"`
-	Articles int       `json:"articles"`
+	ID         string    `json:"id"`
+	Kind       string    `json:"kind,omitempty"` // export (default) or import
+	Status     string    `json:"status"`         // pending, running, done, error
+	Selector   string    `json:"selector"`
+	Dir        string    `json:"dir"`
+	Files      []string  `json:"files,omitempty"`
+	Error      string    `json:"error,omitempty"`
+	Started    time.Time `json:"started_at"`
+	Finished   time.Time `json:"finished_at,omitempty"`
+	Groups     int       `json:"groups"`
+	Articles   int       `json:"articles"`
+	Scanned    int       `json:"scanned,omitempty"`
+	Imported   int       `json:"imported,omitempty"`
+	Duplicates int       `json:"duplicates,omitempty"`
+	Skipped    int       `json:"skipped,omitempty"`
 }

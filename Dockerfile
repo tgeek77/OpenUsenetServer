@@ -14,9 +14,9 @@ ARG CLEANFEED_NG_VERSION=2026-07-03-rc1
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/* \
-    && groupadd --gid 9 news \
-    && useradd --uid 9 --gid 9 --home-dir /var/lib/openusenet --create-home --shell /usr/sbin/nologin news \
-    && mkdir -p /var/spool/openusenet/archive /var/spool/openusenet/cleanfeed \
+    && (getent group news >/dev/null || groupadd --gid 9 news) \
+    && (id -u news >/dev/null 2>&1 || useradd --uid 9 --gid news --home-dir /var/lib/openusenet --create-home --shell /usr/sbin/nologin news) \
+    && mkdir -p /var/lib/openusenet /var/spool/openusenet/archive /var/spool/openusenet/cleanfeed \
     && chown -R news:news /var/lib/openusenet /var/spool/openusenet
 
 COPY scripts/install-cleanfeed.sh /tmp/install-cleanfeed.sh
