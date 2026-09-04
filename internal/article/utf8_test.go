@@ -18,3 +18,11 @@ func TestSanitizeUTF8Latin1(t *testing.T) {
 		t.Fatalf("%q", out)
 	}
 }
+
+func TestSanitizeUTF8StripsNUL(t *testing.T) {
+	in := "ok\x00still"
+	out := article.SanitizeUTF8(in)
+	if strings.ContainsRune(out, 0) || out != "okstill" {
+		t.Fatalf("%q", out)
+	}
+}

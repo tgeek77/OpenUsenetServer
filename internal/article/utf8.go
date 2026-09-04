@@ -6,9 +6,10 @@ import (
 )
 
 // SanitizeUTF8 makes text safe for PostgreSQL UTF-8 storage.
-// Valid UTF-8 is left alone; invalid bytes are treated as ISO-8859-1.
+// NUL bytes are stripped (Postgres text rejects them). Invalid UTF-8
+// sequences are treated as ISO-8859-1.
 func SanitizeUTF8(s string) string {
-	if utf8.ValidString(s) {
+	if utf8.ValidString(s) && !strings.ContainsRune(s, 0) {
 		return s
 	}
 	b := []byte(s)
@@ -16,7 +17,7 @@ func SanitizeUTF8(s string) string {
 	out.Grow(len(b))
 	for i := 0; i < len(b); {
 		c := b[i]
-		if c < 0x20 && c != '\t' && c != '\n' && c != '\r' {
+		if c == 0 || (c < 0x20 && c != '\t' && c != '\n' && c != '\r') {
 			i++
 			continue
 		}
