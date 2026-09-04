@@ -9,8 +9,7 @@ import (
 	"time"
 )
 
-// Conn speaks NNTP on a byte stream: command lines, replies, and
-// RFC 3977 dot-stuffed multi-line blocks.
+// Conn speaks NNTP over a byte stream.
 type Conn struct {
 	c       net.Conn
 	r       *bufio.Reader
@@ -31,8 +30,6 @@ func NewConn(c net.Conn, idle time.Duration) *Conn {
 		maxLine: MaxCommand,
 	}
 }
-
-func (c *Conn) SetIdle(d time.Duration) { c.idle = d }
 
 func (c *Conn) bumpRead() {
 	_ = c.c.SetReadDeadline(time.Now().Add(c.idle))
@@ -63,11 +60,8 @@ func (c *Conn) readLine() (string, error) {
 		buf = append(buf, b)
 		if len(buf) > c.maxLine {
 			// Consume until CRLF so the next command is aligned, then error.
-			for {
-				if b == '\n' {
-					break
-				}
-				b, err := c.r.ReadByte()
+			for b != '\n' {
+				b, err = c.r.ReadByte()
 				if err != nil {
 					return "", errTooLong
 				}
@@ -106,9 +100,7 @@ func (c *Conn) ReadArticle(maxBytes int) ([]byte, error) {
 		if line == "." {
 			return out, nil
 		}
-		if strings.HasPrefix(line, ".") {
-			line = line[1:]
-		}
+		line = strings.TrimPrefix(line, ".")
 		out = append(out, line...)
 		out = append(out, '\r', '\n')
 		if maxBytes > 0 && len(out) > maxBytes {

@@ -373,7 +373,7 @@ func Healthcheck(addr string, timeout time.Duration) error {
 	if err != nil {
 		return err
 	}
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 	_ = c.SetDeadline(time.Now().Add(timeout))
 	buf := make([]byte, 512)
 	n, err := c.Read(buf)

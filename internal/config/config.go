@@ -56,7 +56,6 @@ type Storage struct {
 }
 
 // Retention controls article lifetime, binary-flood quotas, and user upload limits.
-// default_live_days 0 means keep forever (text default).
 type Retention struct {
 	DefaultLiveDays       int    `yaml:"default_live_days"` // 0 = forever
 	LiveDays              int    `yaml:"live_days"`         // deprecated alias for default_live_days
@@ -75,16 +74,15 @@ type Flood struct {
 }
 
 // EffectiveDefaultLiveDays returns the configured default (0 = forever).
+// Falls back to deprecated live_days when default_live_days is unset.
 func (r Retention) EffectiveDefaultLiveDays() int {
 	if r.DefaultLiveDays > 0 {
 		return r.DefaultLiveDays
 	}
-	if r.LiveDays > 0 && r.DefaultLiveDays == 0 {
-		// Only treat live_days as default when default_live_days was omitted and
-		// an explicit positive live_days remains from older configs.
-		return 0
+	if r.LiveDays > 0 {
+		return r.LiveDays
 	}
-	return r.DefaultLiveDays
+	return 0
 }
 
 type Limits struct {
@@ -118,10 +116,7 @@ type GroupsSource struct {
 	FetchISC *bool  `yaml:"fetch_isc"`
 }
 
-// Inbound controls who may IHAVE to this server.
-// With open unset/true and no allow list or peers, all remotes may IHAVE (dev default).
-// With peers configured, enabled peer hostnames are always allowed (resolved to IP).
-// Set open: false to deny everyone not listed in allow or configured as a peer.
+// Inbound controls who may IHAVE (open, allow list, and/or configured peers).
 type Inbound struct {
 	Open            *bool    `yaml:"open"`
 	Allow           []string `yaml:"allow"` // hostnames and/or IP/CIDR
@@ -138,11 +133,11 @@ func (i Inbound) PeerAuthRequired() bool {
 
 // Cleanfeed runs cleanfeed-ng through an external command (see scripts/cleanfeed-filter.pl).
 type Cleanfeed struct {
-	Enabled    bool   `yaml:"enabled"`
-	Mode       string `yaml:"mode"` // reject or audit
-	Command    string `yaml:"command"`
-	Script     string `yaml:"script"`     // cleanfeed-ng Perl script (CLEANFEED_SCRIPT)
-	ConfigDir  string `yaml:"config_dir"` // cleanfeed.local directory (CLEANFEED_CONFIG_DIR)
+	Enabled   bool   `yaml:"enabled"`
+	Mode      string `yaml:"mode"` // reject or audit
+	Command   string `yaml:"command"`
+	Script    string `yaml:"script"`     // cleanfeed-ng Perl script (CLEANFEED_SCRIPT)
+	ConfigDir string `yaml:"config_dir"` // cleanfeed.local directory (CLEANFEED_CONFIG_DIR)
 }
 
 func (c Cleanfeed) Reject() bool {
@@ -196,10 +191,10 @@ func (c Config) InpathsMailTo() []string {
 
 // Archive controls export snapshots (mbox.gz). Never deletes live articles.
 type Archive struct {
-	ExportDir   string `yaml:"export_dir"`
-	Schedule    string `yaml:"schedule"` // daily, weekly, or empty to disable
-	Groups      string `yaml:"groups"`   // all or wildmat
-	RetainGens  int    `yaml:"retain_generations"`
+	ExportDir  string `yaml:"export_dir"`
+	Schedule   string `yaml:"schedule"` // daily, weekly, or empty to disable
+	Groups     string `yaml:"groups"`   // all or wildmat
+	RetainGens int    `yaml:"retain_generations"`
 }
 
 const DefaultISCURL = "https://ftp.isc.org/usenet/CONFIG"
@@ -453,10 +448,6 @@ func applyEnv(cfg *Config) {
 
 func (c Config) Idle() time.Duration {
 	return time.Duration(c.Limits.IdleSeconds) * time.Second
-}
-
-func (c Config) StringListen() string {
-	return c.Listen.NNTP
 }
 
 func NormalizeListen(addr string) string {

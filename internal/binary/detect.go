@@ -1,5 +1,4 @@
-// Package binary classifies Usenet articles as binary (filesharing-style) vs text.
-// This is technical detection only — not subject/keyword content policing.
+// Package binary classifies Usenet articles as binary vs text (yEnc, uuencode, MIME, Base64).
 package binary
 
 import (
@@ -8,8 +7,7 @@ import (
 	"unicode"
 )
 
-// LooksBinary reports whether headers+body look like a binary/filesharing post
-// (yEnc, uuencode, bulk Base64, or binary MIME types with a non-trivial body).
+// LooksBinary reports whether headers+body look like a binary/filesharing post.
 func LooksBinary(headers, body string) bool {
 	if yEnc(body) || uuencode(body) {
 		return true
@@ -21,19 +19,6 @@ func LooksBinary(headers, body string) bool {
 		return true
 	}
 	return false
-}
-
-// LooksBinaryRaw splits wire format on the header/body separator.
-func LooksBinaryRaw(wire []byte) bool {
-	text := string(wire)
-	head, body, ok := strings.Cut(text, "\r\n\r\n")
-	if !ok {
-		head, body, ok = strings.Cut(text, "\n\n")
-	}
-	if !ok {
-		return LooksBinary("", text)
-	}
-	return LooksBinary(head, body)
 }
 
 func yEnc(body string) bool {
@@ -113,7 +98,7 @@ func headerValue(headers, name string) string {
 	return ""
 }
 
-// bulkBase64 detects long runs of Base64-looking lines typical of binary posts.
+// bulkBase64 detects long runs of Base64-looking lines.
 func bulkBase64(body string) bool {
 	lines := strings.Split(body, "\n")
 	run := 0

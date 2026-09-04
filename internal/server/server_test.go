@@ -71,7 +71,7 @@ func TestPOSTFeedsIHAVE(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 	r := bufio.NewReader(c)
 	greet, err := r.ReadString('\n')
 	if err != nil || !strings.HasPrefix(greet, "200 ") {

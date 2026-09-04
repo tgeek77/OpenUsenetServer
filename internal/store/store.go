@@ -7,20 +7,19 @@ import (
 )
 
 type Group struct {
-	Name           string    `json:"name"`
-	Description    string    `json:"description"`
-	Status         string    `json:"status"` // y, n, m
-	Low            int64     `json:"low"`
-	High           int64     `json:"high"`
-	Count          int64     `json:"count"`
-	CreatedAt      time.Time `json:"created_at"`
-	RetentionDays  *int      `json:"retention_days,omitempty"` // nil = inherit forever default
-	RetentionMode  string    `json:"retention_mode,omitempty"` // auto | manual | whitelist
+	Name          string    `json:"name"`
+	Description   string    `json:"description"`
+	Status        string    `json:"status"` // y, n, m
+	Low           int64     `json:"low"`
+	High          int64     `json:"high"`
+	Count         int64     `json:"count"`
+	CreatedAt     time.Time `json:"created_at"`
+	RetentionDays *int      `json:"retention_days,omitempty"` // nil = inherit forever default
+	RetentionMode string    `json:"retention_mode,omitempty"` // auto | whitelist
 }
 
 const (
 	RetentionModeAuto      = "auto"
-	RetentionModeManual    = "manual"
 	RetentionModeWhitelist = "whitelist"
 )
 
@@ -44,11 +43,11 @@ const (
 
 // FloodParams controls auto short-retention when a group is binary-flooded.
 type FloodParams struct {
-	Window       time.Duration
-	MinBinary    int
-	MinRatio     float64
-	FloodDays    int
-	SeedWildmat  string
+	Window      time.Duration
+	MinBinary   int
+	MinRatio    float64
+	FloodDays   int
+	SeedWildmat string
 }
 
 // ExpireResult summarizes a retention pass.
@@ -63,31 +62,31 @@ var (
 )
 
 type OverviewRow struct {
-	Num      int64  `json:"num"`
-	Subject  string `json:"subject"`
-	From     string `json:"from"`
-	Date     string `json:"date"`
-	MsgID    string `json:"message_id"`
-	Refs     string `json:"references"`
-	Bytes    int    `json:"bytes"`
-	Lines    int    `json:"lines"`
-	Xref     string `json:"xref"`
-	Header   string `json:"header,omitempty"` // for HDR: the requested header value
+	Num     int64  `json:"num"`
+	Subject string `json:"subject"`
+	From    string `json:"from"`
+	Date    string `json:"date"`
+	MsgID   string `json:"message_id"`
+	Refs    string `json:"references"`
+	Bytes   int    `json:"bytes"`
+	Lines   int    `json:"lines"`
+	Xref    string `json:"xref"`
+	Header  string `json:"header,omitempty"` // for HDR: the requested header value
 }
 
 type StoredArticle struct {
-	Num        int64 // 0 if retrieved by msgid without a selected group
-	MessageID  string
-	Headers    string
-	Body       string
-	Bytes      int
-	Lines      int
-	StoredAt   time.Time
-	Xref       string
-	Subject    string
-	From       string
-	Date       string
-	Refs       string
+	Num       int64 // 0 if retrieved by msgid without a selected group
+	MessageID string
+	Headers   string
+	Body      string
+	Bytes     int
+	Lines     int
+	StoredAt  time.Time
+	Xref      string
+	Subject   string
+	From      string
+	Date      string
+	Refs      string
 }
 
 type PostResult struct {

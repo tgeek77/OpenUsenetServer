@@ -1,7 +1,6 @@
 package peerauth
 
 import (
-	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"net"
@@ -86,9 +85,4 @@ func VerifyFeedAuth(peer *store.Peer, password string, require bool) bool {
 		return !require
 	}
 	return password == want
-}
-
-// ListEnabled loads enabled peers - convenience for session.
-func ListEnabled(ctx context.Context, st store.Store) ([]store.Peer, error) {
-	return st.ListEnabledPeers(ctx)
 }

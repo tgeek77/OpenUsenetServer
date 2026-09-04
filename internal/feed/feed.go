@@ -100,7 +100,7 @@ func (f *Feeder) ihave(p store.Peer, msgid string, wire []byte) error {
 		return err
 	}
 	nc := nntp.NewConn(c, f.timeout)
-	defer nc.Close()
+	defer func() { _ = nc.Close() }()
 	code, line, err := nc.ReadReply()
 	if err != nil {
 		return err

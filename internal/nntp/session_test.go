@@ -48,9 +48,7 @@ func readBlock(t *testing.T, r *bufio.Reader) (string, []string) {
 		if l == "." {
 			break
 		}
-		if strings.HasPrefix(l, ".") {
-			l = l[1:]
-		}
+		l = strings.TrimPrefix(l, ".")
 		lines = append(lines, l)
 	}
 	return first, lines
@@ -309,4 +307,3 @@ func TestIHavePathLoop(t *testing.T) {
 		t.Fatalf("want path-loop reject, got %q", l)
 	}
 }
-

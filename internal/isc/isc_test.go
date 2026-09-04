@@ -56,10 +56,10 @@ func TestFetchGzip(t *testing.T) {
 		if r.Header.Get("User-Agent") == "" {
 			t.Error("missing User-Agent")
 		}
-		w.Write(gz(t, "local.test 0000000000 0000000001 y\ncomp.lang.go 0000000000 0000000001 y\n"))
+		_, _ = w.Write(gz(t, "local.test 0000000000 0000000001 y\ncomp.lang.go 0000000000 0000000001 y\n"))
 	})
 	mux.HandleFunc("/newsgroups.gz", func(w http.ResponseWriter, r *http.Request) {
-		w.Write(gz(t, "local.test\tLocal test group\ncomp.lang.go\tGo language\n"))
+		_, _ = w.Write(gz(t, "local.test\tLocal test group\ncomp.lang.go\tGo language\n"))
 	})
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)

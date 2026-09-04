@@ -64,9 +64,9 @@ func writeGroupGzip(dir, group string, arts []store.StoredArticle) (string, int,
 	if err != nil {
 		return "", 0, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	zw := gzip.NewWriter(f)
-	defer zw.Close()
+	defer func() { _ = zw.Close() }()
 	for _, a := range arts {
 		from := "From MAILER-DAEMON " + a.StoredAt.UTC().Format(time.ANSIC) + "\n"
 		if i := strings.Index(a.From, "<"); i >= 0 {

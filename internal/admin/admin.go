@@ -18,8 +18,8 @@ import (
 	"openusenet/internal/config"
 	"openusenet/internal/feed"
 	"openusenet/internal/inbound"
-	"openusenet/internal/inpaths"
 	"openusenet/internal/inn"
+	"openusenet/internal/inpaths"
 	"openusenet/internal/isc"
 	"openusenet/internal/nntp"
 	"openusenet/internal/peerauth"
@@ -246,16 +246,16 @@ func (p *Portal) status(w http.ResponseWriter, r *http.Request, _ store.User) {
 	na, _ := p.st.CountArticles(ctx)
 	peers, _ := p.st.ListPeers(ctx)
 	type peerStat struct {
-		ID               int64  `json:"id"`
-		Name             string `json:"name"`
-		Host             string `json:"host"`
-		IncomingHost     string `json:"incoming_host"`
-		Port             int    `json:"port"`
-		Up               bool   `json:"up"`
-		Error            string `json:"error,omitempty"`
-		Notes            string `json:"notes"`
-		Enabled          bool   `json:"enabled"`
-		HasIncomingPass  bool   `json:"has_incoming_password"`
+		ID              int64  `json:"id"`
+		Name            string `json:"name"`
+		Host            string `json:"host"`
+		IncomingHost    string `json:"incoming_host"`
+		Port            int    `json:"port"`
+		Up              bool   `json:"up"`
+		Error           string `json:"error,omitempty"`
+		Notes           string `json:"notes"`
+		Enabled         bool   `json:"enabled"`
+		HasIncomingPass bool   `json:"has_incoming_password"`
 	}
 	ps := make([]peerStat, 0, len(peers))
 	for _, peer := range peers {
@@ -272,25 +272,25 @@ func (p *Portal) status(w http.ResponseWriter, r *http.Request, _ store.User) {
 	peerHosts := store.PeerIHAVEHosts(peers)
 	openAlerts, _ := p.st.ListGroupAlerts(ctx, store.AlertOpen)
 	writeJSON(w, http.StatusOK, map[string]any{
-		"software":     nntp.Software,
-		"version":      nntp.Version,
-		"hostname":     p.cfg.Server.Hostname,
-		"pathhost":     p.cfg.Server.Pathhost,
-		"organization": p.cfg.Server.Organization,
-		"listen_nntp":  p.cfg.Listen.NNTP,
-		"listen_http":  p.cfg.Listen.HTTP,
+		"software":        nntp.Software,
+		"version":         nntp.Version,
+		"hostname":        p.cfg.Server.Hostname,
+		"pathhost":        p.cfg.Server.Pathhost,
+		"organization":    p.cfg.Server.Organization,
+		"listen_nntp":     p.cfg.Listen.NNTP,
+		"listen_http":     p.cfg.Listen.HTTP,
 		"listen_nntp_tls": p.cfg.Listen.NNTPTLS,
 		"listen_http_tls": p.cfg.Listen.HTTPTLS,
-		"started":      p.started.Format(time.RFC3339),
-		"groups":       ng,
-		"articles":     na,
-		"peers":        peers,
-		"peer_status":  ps,
-		"feed":         p.feeder.Stats(),
-		"postgres":     redactURL(p.cfg.Storage.Postgres),
-		"mbox_dir":     p.cfg.Storage.MBoxDir,
-		"export_dir":   p.cfg.Archive.ExportDir,
-		"open_alerts":  len(openAlerts),
+		"started":         p.started.Format(time.RFC3339),
+		"groups":          ng,
+		"articles":        na,
+		"peers":           peers,
+		"peer_status":     ps,
+		"feed":            p.feeder.Stats(),
+		"postgres":        redactURL(p.cfg.Storage.Postgres),
+		"mbox_dir":        p.cfg.Storage.MBoxDir,
+		"export_dir":      p.cfg.Archive.ExportDir,
+		"open_alerts":     len(openAlerts),
 		"retention": map[string]any{
 			"default_live_days":         p.cfg.Retention.EffectiveDefaultLiveDays(),
 			"flood_live_days":           p.cfg.Retention.FloodLiveDays,
@@ -298,11 +298,11 @@ func (p *Portal) status(w http.ResponseWriter, r *http.Request, _ store.User) {
 			"user_binary_posts_per_day": p.cfg.Retention.UserBinaryPostsPerDay,
 		},
 		"inbound": map[string]any{
-			"open":               inbound.Open(p.cfg, peerHosts),
-			"allow":              p.cfg.Inbound.Allow,
-			"effective_allow":    inbound.EffectiveRules(p.cfg, peerHosts),
-			"peer_hosts":         peerHosts,
-			"require_peer_auth":  p.cfg.Inbound.PeerAuthRequired(),
+			"open":              inbound.Open(p.cfg, peerHosts),
+			"allow":             p.cfg.Inbound.Allow,
+			"effective_allow":   inbound.EffectiveRules(p.cfg, peerHosts),
+			"peer_hosts":        peerHosts,
+			"require_peer_auth": p.cfg.Inbound.PeerAuthRequired(),
 		},
 		"cleanfeed": map[string]any{
 			"enabled": p.cfg.Cleanfeed.Enabled,
@@ -796,7 +796,7 @@ func pingNNTP(addr string, timeout time.Duration) (bool, string) {
 	if err != nil {
 		return false, err.Error()
 	}
-	defer c.Close()
+	defer func() { _ = c.Close() }()
 	_ = c.SetDeadline(time.Now().Add(timeout))
 	buf := make([]byte, 256)
 	n, err := c.Read(buf)

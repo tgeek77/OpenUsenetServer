@@ -118,7 +118,7 @@ func cmdServe(args []string) error {
 	if err != nil {
 		return fmt.Errorf("%v\n  openusenet serve --postgres postgres://USER:PASS@HOST:5432/DB?sslmode=disable", err)
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	if err := seed(ctx, st, cfg, false); err != nil {
 		return err
 	}
@@ -168,7 +168,7 @@ func cmdMigrate(args []string) error {
 	if err != nil {
 		return err
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	if err := seed(ctx, st, cfg, true); err != nil {
 		return err
 	}
@@ -240,7 +240,7 @@ func cmdUser(args []string) error {
 	if err != nil {
 		return err
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	hash, err := auth.HashPassword(*password)
 	if err != nil {
 		return err
@@ -307,7 +307,7 @@ func cmdArchive(args []string) error {
 	if err != nil {
 		return err
 	}
-	defer st.Close()
+	defer func() { _ = st.Close() }()
 	res, err := archive.Export(ctx, st, cfg.Archive.ExportDir, *groups)
 	if err != nil {
 		return err
@@ -396,7 +396,7 @@ func cmdInpaths(args []string) error {
 		if err := inpaths.SendReport(body, pathhost, cfg.InpathsMailTo(), cfg.Inpaths.Report.MailCC, inpaths.MailOpts{
 			Host: cfg.Inpaths.Report.SMTPHost, Port: cfg.Inpaths.Report.SMTPPort,
 			Username: cfg.Inpaths.Report.SMTPUser, Password: cfg.Inpaths.Report.SMTPPass,
-			From:     cfg.Inpaths.Report.From,
+			From: cfg.Inpaths.Report.From,
 		}); err != nil {
 			return err
 		}

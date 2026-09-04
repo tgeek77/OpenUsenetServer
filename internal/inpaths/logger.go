@@ -70,7 +70,7 @@ func (l *Logger) PendingArticles() int {
 	if err != nil {
 		return 0
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	sc := bufio.NewScanner(f)
 	for sc.Scan() {
 		if strings.TrimSpace(sc.Text()) != "" {
@@ -86,7 +86,7 @@ func (l *Logger) loadPendingLocked() *Stats {
 	if err != nil {
 		return st
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	sc := bufio.NewScanner(f)
 	for sc.Scan() {
 		if line := strings.TrimSpace(sc.Text()); line != "" {
@@ -124,8 +124,8 @@ func (l *Logger) Flush() (string, error) {
 		return "", err
 	}
 	if err := st.WriteDump(f); err != nil {
-		f.Close()
-		os.Remove(path)
+		_ = f.Close()
+		_ = os.Remove(path)
 		return "", err
 	}
 	if err := f.Close(); err != nil {
@@ -180,7 +180,7 @@ func LoadDumps(dir string, maxAge time.Duration) (*Stats, error) {
 			continue
 		}
 		st, err := ReadDump(f)
-		f.Close()
+		_ = f.Close()
 		if err != nil {
 			continue
 		}

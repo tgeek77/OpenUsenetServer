@@ -31,7 +31,6 @@ type Input struct {
 }
 
 // Accept validates, injects, stores, appends mbox, and offers to peers.
-// userID is used for the binary POST quota when > 0.
 func Accept(ctx context.Context, cfg config.Config, st store.Store, mbox *archive.MBox, feeder Feeder, lg *log.Logger, in Input, userID int64) (*store.PostResult, error) {
 	if lg == nil {
 		lg = log.Default()

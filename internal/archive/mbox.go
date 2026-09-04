@@ -45,7 +45,7 @@ func (m *MBox) Append(group string, a *article.Article) (offset, length int64, e
 	if err != nil {
 		return 0, 0, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	st, err := f.Stat()
 	if err != nil {
 		return 0, 0, err

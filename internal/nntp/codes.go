@@ -27,35 +27,28 @@ const (
 	ContPost     = 340
 	ContAuthPass = 381
 
-	FailTerminating     = 400
-	FailWrongMode       = 401
-	FailAction          = 403
-	FailBadGroup        = 411
-	FailNoGroup         = 412
-	FailArtnumInvalid   = 420
-	FailNext            = 421
-	FailPrev            = 422
-	FailArtnumNotFound  = 423
-	FailMsgidNotFound   = 430
-	FailIHaveRefuse     = 435
-	FailIHaveDefer      = 436
-	FailIHaveReject     = 437
-	FailPostAuth        = 440
-	FailPostReject      = 441
-	FailAuthNeeded      = 480
-	FailPrivacyNeeded   = 483
+	FailAction         = 403
+	FailBadGroup       = 411
+	FailNoGroup        = 412
+	FailArtnumInvalid  = 420
+	FailNext           = 421
+	FailPrev           = 422
+	FailArtnumNotFound = 423
+	FailMsgidNotFound  = 430
+	FailIHaveRefuse    = 435
+	FailIHaveDefer     = 436
+	FailIHaveReject    = 437
+	FailPostAuth       = 440
+	FailPostReject     = 441
+	FailAuthNeeded     = 480
 
-	ErrCommand     = 500
-	ErrSyntax      = 501
-	ErrAccess      = 502
-	ErrUnavailable = 503
-	ErrBase64      = 504
+	ErrCommand = 500
+	ErrSyntax  = 501
+	ErrAccess  = 502
 )
 
 const (
 	MaxCommand = 512
-	MaxArg     = 497
-	MaxMsgID   = 250
 	MaxArtNum  = 2147483647
 )
 

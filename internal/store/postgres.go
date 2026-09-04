@@ -533,7 +533,7 @@ func (p *Postgres) Post(ctx context.Context, headers, body, msgid, subject, from
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	// Claim Message-ID first so concurrent IHAVE from two peers maps to ErrDuplicate
 	// instead of a unique-violation 403 on the articles insert.

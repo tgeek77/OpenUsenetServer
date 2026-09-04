@@ -18,8 +18,7 @@ var dnsCache sync.Map // hostname -> dnsEntry
 
 const dnsTTL = 5 * time.Minute
 
-// EffectiveRules returns the host/IP/CIDR rules used for IHAVE admission.
-// Enabled peer incoming/outgoing hostnames are always included.
+// EffectiveRules returns IHAVE admission rules (allow list + peer hosts).
 func EffectiveRules(cfg config.Config, peerHosts []string) []string {
 	seen := make(map[string]struct{})
 	var rules []string

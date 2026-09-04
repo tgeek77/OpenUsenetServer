@@ -29,25 +29,25 @@ type PathRecorder interface {
 }
 
 type Session struct {
-	conn     *Conn
-	store    store.Store
-	mbox     *archive.MBox
-	cfg      config.Config
-	group    *store.Group
-	cur      int64
-	closed   bool
-	log      *log.Logger
-	feeder   Feeder
-	paths    PathRecorder
-	authUser      string
-	authUserID    int64
-	authOK        bool
-	feedAuthOK    bool
-	feedAuthPeer  int64
-	pending       string // AUTHINFO USER pending username
+	conn         *Conn
+	store        store.Store
+	mbox         *archive.MBox
+	cfg          config.Config
+	group        *store.Group
+	cur          int64
+	closed       bool
+	log          *log.Logger
+	feeder       Feeder
+	paths        PathRecorder
+	authUser     string
+	authUserID   int64
+	authOK       bool
+	feedAuthOK   bool
+	feedAuthPeer int64
+	pending      string // AUTHINFO USER pending username
 }
 
-// Feeder is an outbound IHAVE client. Tests pass nil.
+// Feeder is an outbound IHAVE client.
 type Feeder interface {
 	Offer(msgid, path string, groups []string, wire []byte)
 }
@@ -57,7 +57,7 @@ func Serve(conn *Conn, st store.Store, mbox *archive.MBox, cfg config.Config, lg
 		lg = log.Default()
 	}
 	s := &Session{conn: conn, store: st, mbox: mbox, cfg: cfg, log: lg, feeder: feeder, paths: paths}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	if err := conn.Reply(OKBannerPost, Software+" "+Version+" posting allowed"); err != nil {
 		return
 	}

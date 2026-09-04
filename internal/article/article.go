@@ -5,7 +5,6 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
-	"net/mail"
 	"strconv"
 	"strings"
 	"time"
@@ -20,8 +19,6 @@ type Article struct {
 }
 
 func Parse(raw []byte) (*Article, error) {
-	raw = bytes.ReplaceAll(raw, []byte("\n"), []byte("\n"))
-	// Normalise lone LF to CRLF for split, keep content.
 	text := string(normalizeNewlines(raw))
 	head, body, ok := strings.Cut(text, "\r\n\r\n")
 	if !ok {
@@ -79,10 +76,7 @@ func (a *Article) parseHeaders(head string) error {
 			return fmt.Errorf("malformed header line")
 		}
 		curName = name
-		if strings.HasPrefix(val, " ") {
-			val = val[1:]
-		}
-		curVal.WriteString(val)
+		curVal.WriteString(strings.TrimPrefix(val, " "))
 	}
 	flush()
 	return nil
@@ -217,8 +211,6 @@ func InjectForPost(a *Article, opt InjectOpts) error {
 	}
 	if !a.Has("Date") {
 		a.Set("Date", opt.Now.Format(time.RFC1123Z))
-	} else if _, err := mail.ParseDate(a.Get("Date")); err != nil {
-		// keep original if weird; injection still adds Injection-Date
 	}
 	if !a.Has("Path") {
 		a.Set("Path", opt.Pathhost+"!not-for-mail")
@@ -239,7 +231,6 @@ func InjectForPost(a *Article, opt InjectOpts) error {
 }
 
 // InjectForIHave validates a transferred article and prepends Path.
-// It does not mint a Message-ID or Injection-Info (unlike POST).
 func InjectForIHave(a *Article, opt InjectOpts) error {
 	if strings.TrimSpace(a.Get("From")) == "" {
 		return fmt.Errorf("missing From")

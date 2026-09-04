@@ -68,9 +68,7 @@ func Valid(w string) bool {
 		return false
 	}
 	for _, p := range strings.Split(w, ",") {
-		if strings.HasPrefix(p, "!") {
-			p = p[1:]
-		}
+		p = strings.TrimPrefix(p, "!")
 		if p == "" {
 			return false
 		}

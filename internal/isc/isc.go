@@ -82,7 +82,7 @@ func get(ctx context.Context, client *http.Client, url string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer res.Body.Close()
+	defer func() { _ = res.Body.Close() }()
 	if res.StatusCode != http.StatusOK {
 		_, _ = io.Copy(io.Discard, res.Body)
 		return nil, fmt.Errorf("%s: HTTP %s", url, res.Status)
@@ -96,7 +96,7 @@ func gunzipIfNeeded(b []byte) ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
-		defer r.Close()
+		defer func() { _ = r.Close() }()
 		return io.ReadAll(r)
 	}
 	return b, nil

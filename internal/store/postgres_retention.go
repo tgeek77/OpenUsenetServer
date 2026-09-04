@@ -159,7 +159,7 @@ func (p *Postgres) ConsumeBinaryPostQuota(ctx context.Context, userID int64, lim
 	if err != nil {
 		return 0, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	var count int
 	err = tx.QueryRow(ctx, `
 		SELECT count FROM user_binary_posts WHERE user_id=$1 AND day=$2::date FOR UPDATE`,
