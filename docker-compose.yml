@@ -73,7 +73,8 @@ services:
       ADMIN_DOMAIN: ${ADMIN_DOMAIN:-localhost}
       ACME_EMAIL: ${ACME_EMAIL:-}
     volumes:
-      - ./docker/Caddyfile:/etc/caddy/Caddyfile:ro
+      # :z is required for rootless Podman + SELinux (otherwise: permission denied).
+      - ./docker/Caddyfile:/etc/caddy/Caddyfile:ro,z
       - caddy_data:/data
       - caddy_config:/config
     restart: unless-stopped
