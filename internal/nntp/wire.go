@@ -119,6 +119,12 @@ func (c *Conn) ReadArticle(maxBytes int) ([]byte, error) {
 	}
 }
 
+// ReadLine reads one CRLF-terminated line (used for multi-line response bodies).
+func (c *Conn) ReadLine() (string, error) {
+	c.maxLine = MaxCommand
+	return c.readLine()
+}
+
 // ReadReply reads one NNTP status line and returns its code and full line.
 func (c *Conn) ReadReply() (int, string, error) {
 	c.maxLine = MaxCommand

@@ -50,7 +50,7 @@ type Session struct {
 	pending      string // AUTHINFO USER pending username
 }
 
-// Feeder is an outbound IHAVE client.
+// Feeder is an outbound feed client (CHECK/TAKETHIS or IHAVE).
 type Feeder interface {
 	Offer(msgid, path string, groups []string, wire []byte)
 }
@@ -129,6 +129,8 @@ var commands = map[string]cmd{
 	"XHDR":         {2, 3, cmdHdr},
 	"POST":         {1, 1, cmdPost},
 	"IHAVE":        {2, 2, cmdIHave},
+	"CHECK":        {2, 2, cmdCheck},
+	"TAKETHIS":     {2, 2, cmdTakeThis},
 	"AUTHINFO":     {2, 3, cmdAuthinfo},
 	"NEWNEWS":      {4, 5, cmdNewnews},
 	"NEWGROUPS":    {3, 4, cmdNewgroups},
@@ -148,6 +150,7 @@ func cmdCapabilities(s *Session, _ []string) error {
 		"HDR",
 		"OVER MSGID",
 		"IHAVE",
+		"STREAMING",
 		"AUTHINFO USER",
 		"LIST ACTIVE NEWSGROUPS ACTIVE.TIMES OVERVIEW.FMT HEADERS",
 		"IMPLEMENTATION " + Software + " " + Version,
@@ -171,18 +174,20 @@ func cmdHelp(s *Session, _ []string) error {
 		"  HELP\r\n" +
 		"  AUTHINFO USER name\r\n" +
 		"  AUTHINFO PASS password\r\n" +
+		"  CHECK <message-id>\r\n" +
 		"  IHAVE <message-id>\r\n" +
 		"  LAST\r\n" +
 		"  LIST [ACTIVE [wildmat]|NEWSGROUPS [wildmat]|ACTIVE.TIMES [wildmat]|OVERVIEW.FMT|HEADERS]\r\n" +
 		"  LISTGROUP [newsgroup [range]]\r\n" +
-		"  MODE READER\r\n" +
+		"  MODE READER|STREAM\r\n" +
 		"  NEWGROUPS [yy]yymmdd hhmmss [GMT]\r\n" +
 		"  NEWNEWS wildmat [yy]yymmdd hhmmss [GMT]\r\n" +
 		"  NEXT\r\n" +
 		"  OVER [range]\r\n" +
 		"  POST\r\n" +
 		"  QUIT\r\n" +
-		"  STAT [number|<message-id>]\r\n"
+		"  STAT [number|<message-id>]\r\n" +
+		"  TAKETHIS <message-id>\r\n"
 	return s.conn.WriteBlock(InfoHelp, nil, "help text follows", []byte(text))
 }
 
@@ -197,10 +202,15 @@ func cmdDate(s *Session, _ []string) error {
 }
 
 func cmdMode(s *Session, args []string) error {
-	if !strings.EqualFold(args[1], "READER") {
+	switch strings.ToUpper(args[1]) {
+	case "READER":
+		return s.conn.Reply(OKBannerPost, "Reader mode, posting permitted")
+	case "STREAM":
+		// Legacy; RFC 4644 advertising is via CAPABILITIES STREAMING.
+		return s.conn.Reply(OKStreamMode, "Streaming mode OK")
+	default:
 		return s.conn.Reply(ErrSyntax, "unknown MODE option")
 	}
-	return s.conn.Reply(OKBannerPost, "Reader mode, posting permitted")
 }
 
 func cmdGroup(s *Session, args []string) error {
@@ -911,22 +921,7 @@ func cmdPost(s *Session, _ []string) error {
 
 func cmdIHave(s *Session, args []string) error {
 	ctx := context.Background()
-	if s.ops != nil {
-		if ok, msg := s.ops.AcceptPeers(); !ok {
-			return s.conn.Reply(FailIHaveDefer, msg)
-		}
-	}
-	if err := s.refuseAccept(false); err != nil {
-		return err
-	}
-	var peerHosts []string
-	if peers, err := s.store.ListPeers(ctx); err == nil {
-		peerHosts = store.PeerIHAVEHosts(peers)
-	}
-	if !inbound.Allowed(s.cfg, s.conn.Remote(), peerHosts) {
-		return s.conn.Reply(ErrAccess, "IHAVE not permitted from your address")
-	}
-	if err := s.requireFeedAuth(ctx); err != nil {
+	if err := s.beginPeerTransfer(ctx, FailIHaveDefer, ErrAccess); err != nil {
 		return err
 	}
 	msgid := args[1]
@@ -951,61 +946,158 @@ func cmdIHave(s *Session, args []string) error {
 		}
 		return err
 	}
+	return s.acceptPeerArticle(ctx, msgid, raw, FailIHaveReject, FailIHaveDefer, OKIHave, false)
+}
+
+func cmdCheck(s *Session, args []string) error {
+	ctx := context.Background()
+	if err := s.beginPeerTransfer(ctx, FailCheckDefer, FailCheckRefuse); err != nil {
+		return err
+	}
+	msgid := args[1]
+	if !article.ValidMessageID(msgid) {
+		return s.conn.Reply(ErrSyntax, "syntax error")
+	}
+	dup, err := s.store.HasMessageID(ctx, msgid)
+	if err != nil {
+		return s.conn.ReplyArgs(FailCheckDefer, []string{msgid}, "try again later")
+	}
+	if dup {
+		return s.conn.ReplyArgs(FailCheckRefuse, []string{msgid}, "article not wanted")
+	}
+	return s.conn.ReplyArgs(OKCheckWant, []string{msgid}, "send article via TAKETHIS")
+}
+
+func cmdTakeThis(s *Session, args []string) error {
+	ctx := context.Background()
+	msgid := args[1]
+	// RFC 4644: article always follows; consume before any final status.
+	raw, err := s.conn.ReadArticle(s.cfg.Limits.MaxArtSize)
+	if err != nil {
+		if IsTooLong(err) {
+			s.rememberReject(msgid)
+			return s.conn.ReplyArgs(FailTakeThisReject, []string{msgid}, "article too large")
+		}
+		return err
+	}
+	if !article.ValidMessageID(msgid) {
+		return s.conn.ReplyArgs(FailTakeThisReject, []string{msgid}, "syntax error")
+	}
+	if err := s.beginPeerTransferMsg(ctx, FailTakeThisReject, FailTakeThisReject, msgid); err != nil {
+		return err
+	}
+	return s.acceptPeerArticle(ctx, msgid, raw, FailTakeThisReject, FailTakeThisReject, OKTakeThis, true)
+}
+
+// beginPeerTransfer applies ops/inbound/auth gates for IHAVE/CHECK/TAKETHIS.
+func (s *Session) beginPeerTransfer(ctx context.Context, deferCode, accessCode int) error {
+	return s.beginPeerTransferMsg(ctx, deferCode, accessCode, "")
+}
+
+func (s *Session) beginPeerTransferMsg(ctx context.Context, deferCode, accessCode int, msgid string) error {
+	reply := func(code int, text string) error {
+		if msgid != "" && (code == FailTakeThisReject || code == FailCheckRefuse || code == FailCheckDefer || code == OKCheckWant) {
+			return s.conn.ReplyArgs(code, []string{msgid}, text)
+		}
+		return s.conn.Reply(code, text)
+	}
+	if s.ops != nil {
+		if ok, msg := s.ops.AcceptPeers(); !ok {
+			return reply(deferCode, msg)
+		}
+		if ok, reason := s.ops.AcceptArticles(); !ok {
+			if reason == "" {
+				reason = "server paused"
+			}
+			return reply(deferCode, reason)
+		}
+	}
+	var peerHosts []string
+	if peers, err := s.store.ListPeers(ctx); err == nil {
+		peerHosts = store.PeerIHAVEHosts(peers)
+	}
+	if !inbound.Allowed(s.cfg, s.conn.Remote(), peerHosts) {
+		return reply(accessCode, "transfer not permitted from your address")
+	}
+	return s.requireFeedAuth(ctx)
+}
+
+func (s *Session) replyTransfer(code int, msgid, text string, withMsgID bool) error {
+	if withMsgID {
+		return s.conn.ReplyArgs(code, []string{msgid}, text)
+	}
+	return s.conn.Reply(code, text)
+}
+
+func (s *Session) acceptPeerArticle(ctx context.Context, msgid string, raw []byte, rejectCode, deferCode, okCode int, withMsgID bool) error {
 	art, err := article.Parse(raw)
 	if err != nil {
 		s.rememberReject(msgid)
-		return s.conn.Reply(FailIHaveReject, err.Error())
+		return s.replyTransfer(rejectCode, msgid, err.Error(), withMsgID)
 	}
 	if err := article.InjectForIHave(art, article.InjectOpts{
 		Pathhost: s.cfg.Server.Pathhost,
 		Hostname: s.cfg.Server.Hostname,
 	}); err != nil {
 		s.rememberReject(msgid)
-		return s.conn.Reply(FailIHaveReject, err.Error())
+		return s.replyTransfer(rejectCode, msgid, err.Error(), withMsgID)
 	}
 	wire := art.Wire()
-	if err := s.filterArticle(wire, FailIHaveReject, msgid); err != nil {
-		return err
+	r := cleanfeed.Check(s.cfg.Cleanfeed, wire)
+	if r.Reject {
+		s.rememberReject(msgid)
+		return s.replyTransfer(rejectCode, msgid, r.Reason, withMsgID)
+	}
+	if r.Audit && s.log != nil {
+		s.log.Printf("cleanfeed audit: %s", r.Reason)
 	}
 	if !strings.EqualFold(art.Get("Message-ID"), msgid) {
 		s.rememberReject(msgid)
-		return s.conn.Reply(FailIHaveReject, "Message-ID does not match")
+		return s.replyTransfer(rejectCode, msgid, "Message-ID does not match", withMsgID)
 	}
-	if err := s.checkCutoff(art, FailIHaveReject); err != nil {
-		return err
+	if article.TooOld(art.Get("Date"), s.cfg.Limits.ArtCutoffDays, time.Time{}) {
+		s.rememberReject(msgid)
+		return s.replyTransfer(rejectCode, msgid, "article too old", withMsgID)
 	}
 	peer := s.matchInboundPeer(ctx)
-	if err := s.checkPeerPatterns(peer, art, FailIHaveReject); err != nil {
-		return err
+	if peer != nil {
+		pat := strings.TrimSpace(peer.Patterns)
+		if pat == "" {
+			pat = "*"
+		}
+		if !wildmat.MatchAny(pat, art.Newsgroups()) {
+			s.rememberReject(msgid)
+			return s.replyTransfer(rejectCode, msgid, "newsgroups not wanted by peer subscription", withMsgID)
+		}
 	}
 	if handled, err := s.handleControl(ctx, art); handled {
 		if err != nil {
-			s.log.Printf("ihave cancel %s: %v", msgid, err)
-			return s.conn.Reply(FailIHaveDefer, "try again later")
+			s.log.Printf("peer transfer cancel %s: %v", msgid, err)
+			return s.replyTransfer(deferCode, msgid, "try again later", withMsgID)
 		}
-		return s.conn.Reply(OKIHave, "cancel transferred "+msgid)
+		return s.replyTransfer(okCode, msgid, "cancel transferred "+msgid, withMsgID)
 	}
-	dup, err = s.store.HasMessageID(ctx, msgid)
+	dup, err := s.store.HasMessageID(ctx, msgid)
 	if err != nil {
-		return s.conn.Reply(FailIHaveDefer, "try again later")
+		return s.replyTransfer(deferCode, msgid, "try again later", withMsgID)
 	}
 	if dup {
-		return s.conn.Reply(FailIHaveReject, "duplicate Message-ID")
+		return s.replyTransfer(rejectCode, msgid, "duplicate Message-ID", withMsgID)
 	}
 	isBin := binary.LooksBinary(art.RawHeaders, art.Body)
 	if _, err := s.storeArticle(ctx, art, wire, isBin); errors.Is(err, store.ErrNoGroup) {
 		s.rememberReject(msgid)
-		return s.conn.Reply(FailIHaveReject, "newsgroup does not exist")
+		return s.replyTransfer(rejectCode, msgid, "newsgroup does not exist", withMsgID)
 	} else if errors.Is(err, store.ErrDuplicate) {
-		return s.conn.Reply(FailIHaveReject, "duplicate Message-ID")
+		return s.replyTransfer(rejectCode, msgid, "duplicate Message-ID", withMsgID)
 	} else if err != nil {
-		s.log.Printf("ihave store %s: %v", msgid, err)
-		return s.conn.Reply(FailIHaveDefer, "try again later")
+		s.log.Printf("peer transfer store %s: %v", msgid, err)
+		return s.replyTransfer(deferCode, msgid, "try again later", withMsgID)
 	}
 	if _, err := s.store.NoteAccept(ctx, art.Newsgroups(), isBin, retention.FloodFromConfig(s.cfg)); err != nil && s.log != nil {
 		s.log.Printf("retention note: %v", err)
 	}
-	if err := s.conn.Reply(OKIHave, "article transferred "+msgid); err != nil {
+	if err := s.replyTransfer(okCode, msgid, "article transferred "+msgid, withMsgID); err != nil {
 		return err
 	}
 	s.offer(art, wire)

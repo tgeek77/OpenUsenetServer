@@ -121,10 +121,7 @@ func parseIncomingFile(text string) (*Spec, []string) {
 				password = strings.Trim(m[1], `";`)
 				continue
 			}
-			if strings.Contains(strings.ToLower(line), "streaming:") ||
-				strings.Contains(strings.ToLower(line), "patterns:") {
-				warns = appendUnique(warns, "ignored INN field: "+line)
-			}
+			// streaming:/patterns: are handled by our server defaults; no import needed.
 		}
 	}
 	if host == "" {
@@ -194,10 +191,7 @@ func parseNewsfeedsFile(text string) (*Spec, []string) {
 				patterns = patField[:i]
 				distribs = patField[i+1:]
 			}
-			warns = appendUnique(warns, "patterns applied on offer/accept")
-			if strings.Contains(flags, "S") {
-				warns = appendUnique(warns, "streaming CHECK/TAKETHIS not supported yet")
-			}
+			warns = appendUnique(warns, "patterns/flags applied on offer")
 			s := &Spec{
 				Name: name, PathToken: pathToken, Patterns: patterns, Distributions: distribs,
 				Flags: flags, Port: 119, Warnings: warns,

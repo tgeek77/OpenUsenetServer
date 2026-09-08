@@ -53,9 +53,9 @@ Environment overrides include `OPENUSENET_HOSTNAME`, `OPENUSENET_LISTEN`, `OPENU
 
 ## Protocol (this release)
 
-Implements the RFC 3977 READER, POST, LIST, OVER, HDR, and NEWNEWS bundles, plus `XOVER`/`XHDR` aliases. `MODE READER` is accepted as a no-op. `IHAVE` is advertised. `AUTHINFO USER` is advertised. Streaming `CHECK`/`TAKETHIS` is not advertised yet. The web newsreader includes PostgreSQL full-text search over subject/from/body.
+Implements the RFC 3977 READER, POST, LIST, OVER, HDR, and NEWNEWS bundles, plus `XOVER`/`XHDR` aliases. `MODE READER` is accepted as a no-op. `IHAVE` and RFC 4644 streaming (`STREAMING`, `CHECK`, `TAKETHIS`, `MODE STREAM`) are advertised. `AUTHINFO USER` is advertised. The web newsreader includes PostgreSQL full-text search over subject/from/body.
 
-Inbound IHAVE can be limited with `inbound.allow` (hostnames / IPs / CIDRs). Empty allow list = all remotes.
+Inbound IHAVE/CHECK/TAKETHIS can be limited with `inbound.allow` (hostnames / IPs / CIDRs). Empty allow list = all remotes. Outbound feeds prefer CHECK/TAKETHIS when the peer advertises `STREAMING`, otherwise IHAVE. Peer `newsfeeds` patterns, distributions, and flags (`Ap`, `<size`, `C`/`G`/`U`/`H`, etc.) are enforced when offering articles.
 
 ## Layout
 

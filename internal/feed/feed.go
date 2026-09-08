@@ -4,18 +4,16 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"net"
 	"strings"
 	"sync/atomic"
 	"time"
 
 	"openusenet/internal/article"
 	"openusenet/internal/config"
-	"openusenet/internal/nntp"
 	"openusenet/internal/store"
 )
 
-// PeerSource supplies outbound IHAVE destinations (usually the DB).
+// PeerSource supplies outbound feed destinations (usually the DB).
 type PeerSource interface {
 	ListEnabledPeers(ctx context.Context) ([]store.Peer, error)
 }
@@ -29,9 +27,11 @@ type ArticleSource interface {
 	FailFeed(ctx context.Context, id int64, errMsg string, retryAfter time.Duration) error
 	GetPeer(ctx context.Context, id int64) (*store.Peer, error)
 	FeedQueueStats(ctx context.Context) (store.FeedQueueStats, error)
+	GetGroup(ctx context.Context, name string) (*store.Group, error)
 }
 
-// Feeder offers newly accepted articles to configured peers via durable queue + IHAVE.
+// Feeder offers newly accepted articles to configured peers via durable queue
+// and CHECK/TAKETHIS (streaming) or IHAVE.
 type Feeder struct {
 	cfg     config.Config
 	peers   PeerSource
@@ -51,9 +51,8 @@ func New(cfg config.Config, peers PeerSource, arts ArticleSource, lg *log.Logger
 	return &Feeder{cfg: cfg, peers: peers, arts: arts, log: lg, timeout: 15 * time.Second}
 }
 
-// Offer enqueues the article for peers whose Path/patterns allow it.
-// Transfers run from RunWorker; wire is unused when the article is already stored.
-func (f *Feeder) Offer(msgid, path string, groups []string, _ []byte) {
+// Offer enqueues the article for peers whose Path/patterns/flags allow it.
+func (f *Feeder) Offer(msgid, path string, groups []string, wire []byte) {
 	if f == nil || msgid == "" || f.arts == nil {
 		return
 	}
@@ -66,11 +65,23 @@ func (f *Feeder) Offer(msgid, path string, groups []string, _ []byte) {
 			return
 		}
 	}
+	view := ArticleView{Groups: groups, Path: path, Bytes: len(wire)}
+	if art, err := article.Parse(wire); err == nil && art != nil {
+		view = ViewFromArticle(art, len(wire))
+		if path != "" {
+			view.Path = path
+		}
+		if len(groups) > 0 {
+			view.Groups = groups
+		}
+	}
+	view.GroupStatus = f.groupStatus(context.Background(), view.Groups)
+
 	for _, p := range list {
-		if skipPeer(f.cfg, p, path) {
+		if skipPeer(f.cfg, p, view.Path) {
 			continue
 		}
-		if !PeerWants(p, groups) {
+		if !PeerWantsArticle(p, view) {
 			continue
 		}
 		if err := f.arts.EnqueueFeed(context.Background(), p.ID, msgid); err != nil {
@@ -79,8 +90,22 @@ func (f *Feeder) Offer(msgid, path string, groups []string, _ []byte) {
 		}
 		f.offered.Add(1)
 	}
-	// Kick an immediate drain so local tests and low-latency peers do not wait for the ticker.
 	go f.drainOnce(context.Background())
+}
+
+func (f *Feeder) groupStatus(ctx context.Context, groups []string) map[string]string {
+	if f.arts == nil || len(groups) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(groups))
+	for _, g := range groups {
+		gr, err := f.arts.GetGroup(ctx, g)
+		if err != nil || gr == nil {
+			continue
+		}
+		out[g] = gr.Status
+	}
+	return out
 }
 
 // RunWorker drains the durable feed queue until ctx is done.
@@ -145,11 +170,20 @@ func (f *Feeder) deliver(ctx context.Context, it store.FeedQueueItem) error {
 		return err
 	}
 	if art == nil {
-		// Article cancelled/expired — drop quietly.
 		return nil
 	}
 	wire := []byte(art.Headers + "\r\n\r\n" + art.Body)
-	return f.ihave(*peer, it.MessageID, wire)
+	// Re-check flags at send time (size / active file may matter).
+	parsed, _ := article.Parse(wire)
+	view := ViewFromArticle(parsed, len(wire))
+	if parsed == nil {
+		view = ArticleView{Bytes: len(wire)}
+	}
+	view.GroupStatus = f.groupStatus(ctx, view.Groups)
+	if !PeerWantsArticle(*peer, view) {
+		return nil // drop quietly — peer no longer wants it
+	}
+	return f.deliverArticle(*peer, it.MessageID, wire)
 }
 
 func skipPeer(cfg config.Config, p store.Peer, path string) bool {
@@ -164,89 +198,27 @@ func skipPeer(cfg config.Config, p store.Peer, path string) bool {
 	if strings.EqualFold(host, cfg.Server.Hostname) || strings.EqualFold(host, cfg.Server.Pathhost) {
 		return true
 	}
-	if article.PathContains(path, host) || article.PathContains(path, token) {
+	flags := ParseFlags(p.Flags)
+	// Always suppress if the peer's Path identity is already in Path.
+	if article.PathContains(path, token) {
+		return true
+	}
+	if !flags.PathOnlyExclude {
+		// Without Ap, also treat sitename and host as Path exclusions.
+		if article.PathContains(path, host) {
+			return true
+		}
+		if name := strings.TrimSpace(p.Name); name != "" && article.PathContains(path, name) {
+			return true
+		}
+	} else if article.PathContains(path, host) && strings.EqualFold(host, token) {
+		// Host doubles as path identity.
 		return true
 	}
 	if article.PathContains(path, cfg.Server.Pathhost) && strings.EqualFold(host, cfg.Server.Pathhost) {
 		return true
 	}
 	return false
-}
-
-func (f *Feeder) ihave(p store.Peer, msgid string, wire []byte) error {
-	d := net.Dialer{Timeout: f.timeout}
-	c, err := d.Dial("tcp", p.Addr())
-	if err != nil {
-		return err
-	}
-	nc := nntp.NewConn(c, f.timeout)
-	defer func() { _ = nc.Close() }()
-	code, line, err := nc.ReadReply()
-	if err != nil {
-		return err
-	}
-	if code != nntp.OKBannerPost && code != nntp.OKBannerNoPost {
-		return fmt.Errorf("greeting %s", line)
-	}
-	pass := strings.TrimSpace(p.OutgoingPassword)
-	if pass != "" {
-		user := strings.TrimSpace(p.Name)
-		if user == "" {
-			user = f.cfg.Server.Pathhost
-		}
-		if err := nc.ReplyRaw("AUTHINFO USER " + user); err != nil {
-			return err
-		}
-		code, line, err = nc.ReadReply()
-		if err != nil {
-			return err
-		}
-		if code != nntp.ContAuthPass {
-			return fmt.Errorf("AUTHINFO USER %s", line)
-		}
-		if err := nc.ReplyRaw("AUTHINFO PASS " + pass); err != nil {
-			return err
-		}
-		code, line, err = nc.ReadReply()
-		if err != nil {
-			return err
-		}
-		if code != nntp.OKAuth {
-			return fmt.Errorf("AUTHINFO PASS %s", line)
-		}
-	}
-	if err := nc.ReplyRaw("IHAVE " + msgid); err != nil {
-		return err
-	}
-	code, line, err = nc.ReadReply()
-	if err != nil {
-		return err
-	}
-	switch code {
-	case nntp.ContIHave:
-		if err := nc.WriteDot(wire); err != nil {
-			return err
-		}
-		code, line, err = nc.ReadReply()
-		if err != nil {
-			return err
-		}
-		if code != nntp.OKIHave && code != nntp.FailIHaveRefuse && code != nntp.FailIHaveReject && code != nntp.FailIHaveDefer {
-			return fmt.Errorf("after transfer %s", line)
-		}
-		if code == nntp.FailIHaveDefer {
-			return fmt.Errorf("peer deferred: %s", line)
-		}
-	case nntp.FailIHaveRefuse, nntp.FailIHaveReject:
-		// peer already has it or does not want it — success for our queue
-	case nntp.FailIHaveDefer:
-		return fmt.Errorf("peer deferred: %s", line)
-	default:
-		return fmt.Errorf("IHAVE %s", line)
-	}
-	_ = nc.ReplyRaw("QUIT")
-	_, _, _ = nc.ReadReply()
-	return nil
 }
 
 type Stats struct {

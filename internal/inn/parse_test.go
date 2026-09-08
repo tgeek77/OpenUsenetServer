@@ -22,9 +22,6 @@ news-d:563
 	found := map[string]bool{}
 	for _, x := range d {
 		found[x.Host] = true
-		if x.Host == "news-c.example.com" && len(x.Warnings) == 0 {
-			t.Fatal("expected warnings for streaming")
-		}
 	}
 	if !found["news-b.example"] || !found["news-c.example.com"] {
 		t.Fatalf("%v", found)

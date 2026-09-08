@@ -70,8 +70,7 @@ func Parse(text string) []Draft {
 			}
 			if m := reHostname.FindStringSubmatch(line); m != nil {
 				host := strings.Trim(m[1], `";`)
-				add(host, 119, "incoming.conf peer "+inPeer,
-					"INN streaming/filters not imported; outbound IHAVE host/port only")
+				add(host, 119, "incoming.conf peer "+inPeer)
 				continue
 			}
 			if strings.Contains(strings.ToLower(line), "streaming:") ||
@@ -88,11 +87,8 @@ func Parse(text string) []Draft {
 			if i := strings.IndexAny(host, " \t"); i >= 0 {
 				host = host[:i]
 			}
-			warns := []string{"patterns applied on offer/accept (" + patterns + ")"}
-			if strings.Contains(flags, "S") || strings.Contains(flags, "Nm") {
-				warns = append(warns, "streaming CHECK/TAKETHIS not supported yet")
-			}
-			add(host, 119, "newsfeeds:"+name, warns...)
+			_ = flags
+			add(host, 119, "newsfeeds:"+name, "patterns/flags applied on offer ("+patterns+")")
 			continue
 		}
 		if m := reHostPort.FindStringSubmatch(line); m != nil {

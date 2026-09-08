@@ -19,7 +19,10 @@ const (
 	OKHdr          = 225
 	OKNewNews      = 230
 	OKNewGroups    = 231
+	OKStreamMode   = 203 // MODE STREAM (legacy; RFC 4644 uses CAPABILITIES)
 	OKIHave        = 235
+	OKCheckWant    = 238 // CHECK: send the article
+	OKTakeThis     = 239 // TAKETHIS: article transferred
 	OKPost         = 240
 	OKAuth         = 281
 
@@ -35,9 +38,12 @@ const (
 	FailPrev           = 422
 	FailArtnumNotFound = 423
 	FailMsgidNotFound  = 430
+	FailCheckDefer     = 431 // CHECK: try again later
 	FailIHaveRefuse    = 435
 	FailIHaveDefer     = 436
 	FailIHaveReject    = 437
+	FailCheckRefuse    = 438 // CHECK: article not wanted
+	FailTakeThisReject = 439 // TAKETHIS: transfer rejected
 	FailPostAuth       = 440
 	FailPostReject     = 441
 	FailAuthNeeded     = 480

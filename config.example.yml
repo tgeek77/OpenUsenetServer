@@ -63,7 +63,10 @@ groups_source:
   isc_url: https://ftp.isc.org/usenet/CONFIG
   # fetch_isc: false   # set to skip the ISC pull (tests / airgap)
 
-# YAML peers seed the DB only when the peers table is empty. Prefer the admin UI afterward.
+# YAML peers seed the DB only when the peers table is empty. Prefer the admin UI afterward
+# (patterns, distributions, newsfeeds flags). Outbound offer enforces patterns, distributions,
+# and flags (Ap, <size, C/G/U/H, Ac, …). Transfer uses CHECK/TAKETHIS when the peer
+# advertises STREAMING, otherwise IHAVE.
 # peers:
 #   - host: news-b
 #     port: 119

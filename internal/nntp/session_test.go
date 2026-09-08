@@ -73,8 +73,8 @@ func TestGreetingAndCapabilities(t *testing.T) {
 			t.Fatalf("capabilities missing %q in %q", want, joined)
 		}
 	}
-	if strings.Contains(joined, "STREAMING") {
-		t.Fatalf("should not advertise STREAMING yet: %q", joined)
+	if !strings.Contains(joined, "STREAMING") {
+		t.Fatalf("should advertise STREAMING: %q", joined)
 	}
 	if !strings.Contains(joined, "IHAVE") {
 		t.Fatalf("should advertise IHAVE: %q", joined)
@@ -306,5 +306,41 @@ func TestIHavePathLoop(t *testing.T) {
 	_, _ = c.Write([]byte(art))
 	if l := readLine(t, r); !strings.HasPrefix(l, "437 ") {
 		t.Fatalf("want path-loop reject, got %q", l)
+	}
+}
+
+func TestCheckAndTakeThis(t *testing.T) {
+	c, _ := startTestServer(t)
+	r := bufio.NewReader(c)
+	_ = readLine(t, r)
+
+	_, _ = c.Write([]byte("MODE STREAM\r\n"))
+	if l := readLine(t, r); !strings.HasPrefix(l, "203 ") {
+		t.Fatalf("mode stream %q", l)
+	}
+
+	msgid := "<stream-1@news.test>"
+	_, _ = c.Write([]byte("CHECK " + msgid + "\r\n"))
+	if l := readLine(t, r); !strings.HasPrefix(l, "238 ") {
+		t.Fatalf("check want %q", l)
+	}
+
+	art := "Path: other!not-for-mail\r\n" +
+		"From: a@b.c\r\n" +
+		"Newsgroups: local.test\r\n" +
+		"Subject: stream\r\n" +
+		"Date: Mon, 01 Jan 2024 00:00:00 +0000\r\n" +
+		"Message-ID: " + msgid + "\r\n" +
+		"\r\n" +
+		"body\r\n" +
+		".\r\n"
+	_, _ = c.Write([]byte("TAKETHIS " + msgid + "\r\n" + art))
+	if l := readLine(t, r); !strings.HasPrefix(l, "239 ") {
+		t.Fatalf("takethis ok %q", l)
+	}
+
+	_, _ = c.Write([]byte("CHECK " + msgid + "\r\n"))
+	if l := readLine(t, r); !strings.HasPrefix(l, "438 ") {
+		t.Fatalf("check refuse %q", l)
 	}
 }
