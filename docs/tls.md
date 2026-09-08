@@ -16,6 +16,14 @@ Caddy sits in front of the admin UI and obtains certificates automatically.
 
 3. Open firewall / security-group ports **80** (ACME HTTP-01), **443** (HTTPS), and **119** (NNTP).
    Rootless Podman needs `net.ipv4.ip_unprivileged_port_start=80`. The Caddyfile bind mount uses `:z` so SELinux can read it.
+   On firewalld:
+
+   ```bash
+   sudo firewall-cmd --permanent --add-service=http
+   sudo firewall-cmd --permanent --add-service=https
+   sudo firewall-cmd --permanent --add-port=119/tcp   # Alma has no firewalld service named nntp
+   sudo firewall-cmd --reload
+   ```
 4. Start:
 
    ```bash

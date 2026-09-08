@@ -21,7 +21,7 @@ services:
       postgres:
         condition: service_healthy
     ports:
-      - "119:119"
+      - "0.0.0.0:119:119"
       # Admin HTTP is local-only; public HTTPS goes through Caddy on 443.
       - "127.0.0.1:8080:8080"
     environment:
@@ -66,9 +66,9 @@ services:
       openusenet:
         condition: service_healthy
     ports:
-      - "80:80"
-      - "443:443"
-      - "443:443/udp"
+      - "0.0.0.0:80:80"
+      - "0.0.0.0:443:443"
+      - "0.0.0.0:443:443/udp"
     environment:
       ADMIN_DOMAIN: ${ADMIN_DOMAIN:-localhost}
       ACME_EMAIL: ${ACME_EMAIL:-}

@@ -5,6 +5,7 @@
 *.out
 .env
 config.yml
+docker-compose.override.yml
 /data/
 /archive/
 .DS_Store

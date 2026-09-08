@@ -30,7 +30,7 @@ cp .env.example .env
 # optional first admin: OPENUSENET_BOOTSTRAP_ADMIN=admin:changeme
 docker build -t jsevans/openusenet:0.5.0 -t jsevans/openusenet:latest .
 docker compose up -d
-printf 'CAPABILITIES\r\nQUIT\r\n' | nc -q 2 127.0.0.1 119
+printf 'CAPABILITIES\r\nQUIT\r\n' | timeout 3 nc 127.0.0.1 119
 # admin (local):  http://127.0.0.1:8080/
 # admin (public): https://$ADMIN_DOMAIN/   # Caddy + Let's Encrypt; see docs/tls.md
 ```
