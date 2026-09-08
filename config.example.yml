@@ -94,6 +94,15 @@ groups_source:
 #   script: /usr/local/lib/cleanfeed-ng/cleanfeed
 #   config_dir: /usr/local/lib/cleanfeed-ng/etc
 
+# Hierarchy control messages (newgroup / rmgroup / checkgroups).
+# Applied controls set origin=control and are never overwritten by ISC refresh.
+# control:
+#   enabled: true
+#   accept_all: true          # set false + allow_from when you add PGP verify
+#   allow_from:
+#     - group-admin@isc.org
+#     - "@example.org"
+
 # TOP1000 path statistics (required by many peers, e.g. Eternal September).
 # Path headers are logged on POST/IHAVE; flush dumps and mail reports to top1000@anthologeek.net.
 # inpaths:

@@ -15,6 +15,7 @@ import (
 	"openusenet/internal/archive"
 	"openusenet/internal/auth"
 	"openusenet/internal/config"
+	controlmsg "openusenet/internal/control"
 	"openusenet/internal/feed"
 	"openusenet/internal/inpaths"
 	"openusenet/internal/nntp"
@@ -56,6 +57,9 @@ func New(cfg config.Config, st store.Store, mbox *archive.MBox, lg *log.Logger) 
 }
 
 func (s *Server) ListenAndServe(ctx context.Context) error {
+	if err := controlmsg.SeedBuiltinGroups(ctx, s.st); err != nil {
+		return fmt.Errorf("seed control groups: %w", err)
+	}
 	if err := SeedPeers(ctx, s.st, s.cfg); err != nil {
 		return err
 	}

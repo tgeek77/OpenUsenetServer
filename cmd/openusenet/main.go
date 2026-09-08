@@ -13,6 +13,7 @@ import (
 	"openusenet/internal/archive"
 	"openusenet/internal/auth"
 	"openusenet/internal/config"
+	controlmsg "openusenet/internal/control"
 	"openusenet/internal/inpaths"
 	"openusenet/internal/isc"
 	"openusenet/internal/nntp"
@@ -553,6 +554,9 @@ func seed(ctx context.Context, st store.Store, cfg config.Config, alwaysISC bool
 		if err := st.EnsureGroup(ctx, g.Name, g.Description, g.Status); err != nil {
 			return fmt.Errorf("seed group %s: %w", g.Name, err)
 		}
+	}
+	if err := controlmsg.SeedBuiltinGroups(ctx, st); err != nil {
+		return fmt.Errorf("seed control groups: %w", err)
 	}
 	return nil
 }

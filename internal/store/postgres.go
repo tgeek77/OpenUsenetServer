@@ -136,7 +136,20 @@ func OpenPostgres(ctx context.Context, url string) (*Postgres, error) {
 		pool.Close()
 		return nil, err
 	}
+	if err := p.migrateGroupOrigin(ctx); err != nil {
+		pool.Close()
+		return nil, err
+	}
 	return p, nil
+}
+
+func (p *Postgres) migrateGroupOrigin(ctx context.Context) error {
+	_, err := p.pool.Exec(ctx, `
+		ALTER TABLE newsgroups ADD COLUMN IF NOT EXISTS origin TEXT NOT NULL DEFAULT 'isc'`)
+	if err != nil {
+		return fmt.Errorf("group origin migrate: %w", err)
+	}
+	return nil
 }
 
 func (p *Postgres) migratePeers(ctx context.Context) error {
@@ -169,12 +182,16 @@ func (p *Postgres) EnsureGroup(ctx context.Context, name, desc, status string) e
 	if status == "" {
 		status = "y"
 	}
+	// Admin/config upsert: may update any row (manual override), marks origin admin
+	// unless the row is already control-managed — then keep origin=control but apply status/desc.
 	_, err := p.pool.Exec(ctx, `
-		INSERT INTO newsgroups (name, description, status)
-		VALUES ($1, $2, $3)
+		INSERT INTO newsgroups (name, description, status, origin)
+		VALUES ($1, $2, $3, $4)
 		ON CONFLICT (name) DO UPDATE SET
 			description = CASE WHEN EXCLUDED.description <> '' THEN EXCLUDED.description ELSE newsgroups.description END,
-			status = EXCLUDED.status`, name, desc, status)
+			status = EXCLUDED.status,
+			origin = CASE WHEN newsgroups.origin = 'control' THEN 'control' ELSE 'local' END`,
+		name, desc, status, OriginLocal)
 	return err
 }
 
@@ -185,26 +202,27 @@ func (p *Postgres) EnsureGroups(ctx context.Context, groups []Group) error {
 		if end > len(groups) {
 			end = len(groups)
 		}
-		if err := p.ensureGroupBatch(ctx, groups[i:end]); err != nil {
+		if err := p.ensureGroupBatchISC(ctx, groups[i:end]); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (p *Postgres) ensureGroupBatch(ctx context.Context, groups []Group) error {
+// ensureGroupBatchISC inserts/updates ISC groups only; never clobbers control/local/admin.
+func (p *Postgres) ensureGroupBatchISC(ctx context.Context, groups []Group) error {
 	if len(groups) == 0 {
 		return nil
 	}
 	var b strings.Builder
 	args := make([]any, 0, len(groups)*3)
-	b.WriteString(`INSERT INTO newsgroups (name, description, status) VALUES `)
+	b.WriteString(`INSERT INTO newsgroups (name, description, status, origin) VALUES `)
 	for i, g := range groups {
 		if i > 0 {
 			b.WriteByte(',')
 		}
 		n := i * 3
-		fmt.Fprintf(&b, "($%d,$%d,$%d)", n+1, n+2, n+3)
+		fmt.Fprintf(&b, "($%d,$%d,$%d,'isc')", n+1, n+2, n+3)
 		status := g.Status
 		if status == "" {
 			status = "y"
@@ -213,9 +231,45 @@ func (p *Postgres) ensureGroupBatch(ctx context.Context, groups []Group) error {
 	}
 	b.WriteString(` ON CONFLICT (name) DO UPDATE SET
 		description = CASE WHEN EXCLUDED.description <> '' THEN EXCLUDED.description ELSE newsgroups.description END,
-		status = EXCLUDED.status`)
+		status = EXCLUDED.status
+		WHERE newsgroups.origin = 'isc'`)
 	_, err := p.pool.Exec(ctx, b.String(), args...)
 	return err
+}
+
+func (p *Postgres) ApplyControlGroup(ctx context.Context, name, desc, status string) error {
+	if status == "" {
+		status = "y"
+	}
+	_, err := p.pool.Exec(ctx, `
+		INSERT INTO newsgroups (name, description, status, origin)
+		VALUES ($1, $2, $3, $4)
+		ON CONFLICT (name) DO UPDATE SET
+			description = CASE WHEN EXCLUDED.description <> '' THEN EXCLUDED.description ELSE newsgroups.description END,
+			status = EXCLUDED.status,
+			origin = 'control'`, name, desc, status, OriginControl)
+	return err
+}
+
+func (p *Postgres) DisableControlGroup(ctx context.Context, name string) error {
+	tag, err := p.pool.Exec(ctx, `
+		UPDATE newsgroups SET status = 'n', origin = 'control' WHERE name = $1`, name)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		// rmgroup for unknown group: record as disabled so ISC won't revive it as wanted.
+		_, err = p.pool.Exec(ctx, `
+			INSERT INTO newsgroups (name, description, status, origin)
+			VALUES ($1, '', 'n', $2)
+			ON CONFLICT (name) DO UPDATE SET status = 'n', origin = 'control'`, name, OriginControl)
+		return err
+	}
+	return nil
+}
+
+func scanGroup(sc interface{ Scan(dest ...any) error }, g *Group) error {
+	return sc.Scan(&g.Name, &g.Description, &g.Status, &g.Low, &g.High, &g.Count, &g.CreatedAt, &g.RetentionDays, &g.RetentionMode, &g.Origin)
 }
 
 func (p *Postgres) CountGroups(ctx context.Context) (int, error) {
@@ -281,7 +335,7 @@ func (p *Postgres) SearchGroups(ctx context.Context, query string, busyOnly bool
 	var out []Group
 	for rows.Next() {
 		var g Group
-		if err := rows.Scan(&g.Name, &g.Description, &g.Status, &g.Low, &g.High, &g.Count, &g.CreatedAt, &g.RetentionDays, &g.RetentionMode); err != nil {
+		if err := scanGroup(rows, &g); err != nil {
 			return nil, err
 		}
 		out = append(out, g)
@@ -298,7 +352,7 @@ func (p *Postgres) ListGroups(ctx context.Context, wildmat string) ([]Group, err
 	var out []Group
 	for rows.Next() {
 		var g Group
-		if err := rows.Scan(&g.Name, &g.Description, &g.Status, &g.Low, &g.High, &g.Count, &g.CreatedAt, &g.RetentionDays, &g.RetentionMode); err != nil {
+		if err := scanGroup(rows, &g); err != nil {
 			return nil, err
 		}
 		if wildmat != "" && !wmat.Match(wildmat, g.Name) {
@@ -311,8 +365,7 @@ func (p *Postgres) ListGroups(ctx context.Context, wildmat string) ([]Group, err
 
 func (p *Postgres) GetGroup(ctx context.Context, name string) (*Group, error) {
 	var g Group
-	err := p.pool.QueryRow(ctx, `SELECT `+groupSelectCols+` FROM newsgroups WHERE name=$1`, name).
-		Scan(&g.Name, &g.Description, &g.Status, &g.Low, &g.High, &g.Count, &g.CreatedAt, &g.RetentionDays, &g.RetentionMode)
+	err := scanGroup(p.pool.QueryRow(ctx, `SELECT `+groupSelectCols+` FROM newsgroups WHERE name=$1`, name), &g)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
@@ -523,7 +576,7 @@ func (p *Postgres) NewGroups(ctx context.Context, since time.Time) ([]Group, err
 	var out []Group
 	for rows.Next() {
 		var g Group
-		if err := rows.Scan(&g.Name, &g.Description, &g.Status, &g.Low, &g.High, &g.Count, &g.CreatedAt, &g.RetentionDays, &g.RetentionMode); err != nil {
+		if err := scanGroup(rows, &g); err != nil {
 			return nil, err
 		}
 		out = append(out, g)

@@ -46,7 +46,7 @@ func (p *Postgres) migrateRetention(ctx context.Context) error {
 	return nil
 }
 
-const groupSelectCols = `name, description, status, low, high, count, created_at, retention_days, retention_mode`
+const groupSelectCols = `name, description, status, low, high, count, created_at, retention_days, retention_mode, COALESCE(origin, 'isc')`
 
 func (p *Postgres) NoteAccept(ctx context.Context, groups []string, binary bool, flood FloodParams) ([]string, error) {
 	var flooded []string

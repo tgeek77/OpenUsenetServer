@@ -25,6 +25,7 @@ type Config struct {
 	Inbound      Inbound      `yaml:"inbound"`
 	Inpaths      Inpaths      `yaml:"inpaths"`
 	Cleanfeed    Cleanfeed    `yaml:"cleanfeed"`
+	Control      Control      `yaml:"control"`
 	Archive      Archive      `yaml:"archive"`
 	Watchdog     Watchdog     `yaml:"watchdog"`
 }
@@ -168,6 +169,21 @@ func (c Cleanfeed) Reject() bool {
 
 func (c Cleanfeed) Audit() bool {
 	return c.Enabled && strings.EqualFold(strings.TrimSpace(c.Mode), "audit")
+}
+
+// Control configures hierarchy control messages (newgroup / rmgroup / checkgroups).
+// Control-managed groups always override ISC active-file updates.
+type Control struct {
+	Enabled   *bool    `yaml:"enabled"`    // default true
+	AcceptAll *bool    `yaml:"accept_all"` // default true until PGP verify exists
+	AllowFrom []string `yaml:"allow_from"` // used when accept_all is false
+}
+
+func (c Control) IsEnabled() bool {
+	if c.Enabled == nil {
+		return true
+	}
+	return *c.Enabled
 }
 
 // Inpaths controls TOP1000 path statistics (ninpaths-compatible dumps).

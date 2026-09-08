@@ -79,14 +79,25 @@ func (m *Memory) EnsureGroup(_ context.Context, name, desc, status string) error
 		status = "y"
 	}
 	if g, ok := m.groups[name]; ok {
+		if g.Origin == OriginControl {
+			// Config/admin may still change status/desc but keep control origin.
+			if desc != "" {
+				g.Description = desc
+			}
+			g.Status = status
+			return nil
+		}
 		if desc != "" {
 			g.Description = desc
 		}
 		g.Status = status
+		if g.Origin == "" || g.Origin == OriginISC {
+			g.Origin = OriginLocal
+		}
 		return nil
 	}
 	m.groups[name] = &memGroup{Group: Group{
-		Name: name, Description: desc, Status: status, CreatedAt: time.Now(),
+		Name: name, Description: desc, Status: status, Origin: OriginLocal, CreatedAt: time.Now(),
 	}}
 	m.byNum[name] = map[int64]*memArt{}
 	return nil
@@ -94,10 +105,71 @@ func (m *Memory) EnsureGroup(_ context.Context, name, desc, status string) error
 
 func (m *Memory) EnsureGroups(ctx context.Context, groups []Group) error {
 	for _, g := range groups {
-		if err := m.EnsureGroup(ctx, g.Name, g.Description, g.Status); err != nil {
+		if err := m.ensureGroupISC(ctx, g); err != nil {
 			return err
 		}
 	}
+	return nil
+}
+
+func (m *Memory) ensureGroupISC(_ context.Context, g Group) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	status := g.Status
+	if status == "" {
+		status = "y"
+	}
+	if existing, ok := m.groups[g.Name]; ok {
+		if existing.Origin != OriginISC && existing.Origin != "" {
+			return nil // control/local/admin win
+		}
+		if g.Description != "" {
+			existing.Description = g.Description
+		}
+		existing.Status = status
+		existing.Origin = OriginISC
+		return nil
+	}
+	m.groups[g.Name] = &memGroup{Group: Group{
+		Name: g.Name, Description: g.Description, Status: status, Origin: OriginISC, CreatedAt: time.Now(),
+	}}
+	m.byNum[g.Name] = map[int64]*memArt{}
+	return nil
+}
+
+func (m *Memory) ApplyControlGroup(_ context.Context, name, desc, status string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if status == "" {
+		status = "y"
+	}
+	if g, ok := m.groups[name]; ok {
+		if desc != "" {
+			g.Description = desc
+		}
+		g.Status = status
+		g.Origin = OriginControl
+		return nil
+	}
+	m.groups[name] = &memGroup{Group: Group{
+		Name: name, Description: desc, Status: status, Origin: OriginControl, CreatedAt: time.Now(),
+	}}
+	m.byNum[name] = map[int64]*memArt{}
+	return nil
+}
+
+func (m *Memory) DisableControlGroup(_ context.Context, name string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if g, ok := m.groups[name]; ok {
+		g.Status = "n"
+		g.Origin = OriginControl
+		return nil
+	}
+	m.groups[name] = &memGroup{Group: Group{
+		Name: name, Status: "n", Origin: OriginControl, CreatedAt: time.Now(),
+	}}
+	m.byNum[name] = map[int64]*memArt{}
 	return nil
 }
 

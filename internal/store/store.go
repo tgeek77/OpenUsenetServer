@@ -16,7 +16,15 @@ type Group struct {
 	CreatedAt     time.Time `json:"created_at"`
 	RetentionDays *int      `json:"retention_days,omitempty"` // nil = inherit forever default
 	RetentionMode string    `json:"retention_mode,omitempty"` // auto | whitelist
+	Origin        string    `json:"origin,omitempty"`         // isc | control | local | admin
 }
+
+const (
+	OriginISC     = "isc"
+	OriginControl = "control"
+	OriginLocal   = "local"
+	OriginAdmin   = "admin"
+)
 
 const (
 	RetentionModeAuto      = "auto"
@@ -116,6 +124,11 @@ type PostResult struct {
 type Store interface {
 	EnsureGroup(ctx context.Context, name, desc, status string) error
 	EnsureGroups(ctx context.Context, groups []Group) error
+	// ApplyControlGroup creates/updates a group from a hierarchy control message (origin=control).
+	// Always wins over ISC-derived data.
+	ApplyControlGroup(ctx context.Context, name, desc, status string) error
+	// DisableControlGroup marks a group status=n via rmgroup/checkgroups (origin=control).
+	DisableControlGroup(ctx context.Context, name string) error
 	CountGroups(ctx context.Context) (int, error)
 	ListGroups(ctx context.Context, wildmat string) ([]Group, error)
 	GetGroup(ctx context.Context, name string) (*Group, error)

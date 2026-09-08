@@ -17,6 +17,7 @@ import (
 	"openusenet/internal/binary"
 	"openusenet/internal/cleanfeed"
 	"openusenet/internal/config"
+	controlmsg "openusenet/internal/control"
 	"openusenet/internal/inbound"
 	"openusenet/internal/ops"
 	"openusenet/internal/peerauth"
@@ -766,25 +767,49 @@ func (s *Session) checkModerated(ctx context.Context, art *article.Article, reje
 	return nil
 }
 
-func (s *Session) handleControl(ctx context.Context, art *article.Article) (handled bool, err error) {
+func (s *Session) handleControl(ctx context.Context, art *article.Article) (skipStore bool, err error) {
 	target := article.CancelTarget(art)
 	if target == "" {
 		target = article.SupersedesTarget(art)
 	}
-	if target == "" {
+	if target != "" {
+		existed, err := s.store.CancelMessageID(ctx, target)
+		if err != nil {
+			return true, err
+		}
+		_ = s.store.RememberMessageID(ctx, art.Get("Message-ID"))
+		if s.log != nil {
+			s.log.Printf("cancel %s (existed=%v) via %s", target, existed, art.Get("Message-ID"))
+		}
+		return true, nil
+	}
+
+	msg, ok := controlmsg.Parse(art)
+	if !ok {
 		return false, nil
 	}
-	// Cancels always remember the target; remove article body if present.
-	existed, err := s.store.CancelMessageID(ctx, target)
-	if err != nil {
-		return true, err
+	if s.cfg.Control.Enabled != nil && !*s.cfg.Control.Enabled {
+		if s.log != nil {
+			s.log.Printf("control %s ignored (disabled)", msg.Kind)
+		}
+		return false, nil
 	}
-	// Also remember the cancel article's own Message-ID so it is not re-fed as content.
-	_ = s.store.RememberMessageID(ctx, art.Get("Message-ID"))
-	if s.log != nil {
-		s.log.Printf("cancel %s (existed=%v) via %s", target, existed, art.Get("Message-ID"))
+	pol := controlmsg.DefaultPolicy()
+	if s.cfg.Control.AcceptAll != nil {
+		pol.AcceptAll = *s.cfg.Control.AcceptAll
 	}
-	return true, nil
+	pol.AllowFrom = s.cfg.Control.AllowFrom
+	if !pol.Allowed(art, msg) {
+		if s.log != nil {
+			s.log.Printf("control %s denied for From %q", msg.Kind, art.Get("From"))
+		}
+		return false, nil
+	}
+	if _, err := controlmsg.Apply(ctx, s.store, msg, s.log); err != nil {
+		return false, err
+	}
+	// Hierarchy controls are stored and fed like normal articles.
+	return false, nil
 }
 
 func (s *Session) matchInboundPeer(ctx context.Context) *store.Peer {
@@ -875,11 +900,13 @@ func cmdPost(s *Session, _ []string) error {
 		return err
 	}
 	ctx := context.Background()
-	if handled, err := s.handleControl(ctx, art); handled {
+	if skip, err := s.handleControl(ctx, art); skip {
 		if err != nil {
 			return err
 		}
 		return s.conn.Reply(OKPost, "cancel received "+msgid)
+	} else if err != nil {
+		return s.conn.Reply(FailPostReject, err.Error())
 	}
 	if err := s.checkModerated(ctx, art, FailPostReject); err != nil {
 		return err
@@ -1070,12 +1097,15 @@ func (s *Session) acceptPeerArticle(ctx context.Context, msgid string, raw []byt
 			return s.replyTransfer(rejectCode, msgid, "newsgroups not wanted by peer subscription", withMsgID)
 		}
 	}
-	if handled, err := s.handleControl(ctx, art); handled {
+	if skip, err := s.handleControl(ctx, art); skip {
 		if err != nil {
 			s.log.Printf("peer transfer cancel %s: %v", msgid, err)
 			return s.replyTransfer(deferCode, msgid, "try again later", withMsgID)
 		}
 		return s.replyTransfer(okCode, msgid, "cancel transferred "+msgid, withMsgID)
+	} else if err != nil {
+		s.log.Printf("peer transfer control %s: %v", msgid, err)
+		return s.replyTransfer(rejectCode, msgid, err.Error(), withMsgID)
 	}
 	dup, err := s.store.HasMessageID(ctx, msgid)
 	if err != nil {

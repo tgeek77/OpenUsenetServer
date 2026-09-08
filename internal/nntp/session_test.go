@@ -344,3 +344,43 @@ func TestCheckAndTakeThis(t *testing.T) {
 		t.Fatalf("check refuse %q", l)
 	}
 }
+
+func TestIHaveNewgroupControl(t *testing.T) {
+	c, st := startTestServer(t)
+	r := bufio.NewReader(c)
+	_ = readLine(t, r)
+	// Seed control.newgroup so the article can be filed.
+	if err := st.EnsureGroup(context.Background(), "control.newgroup", "Newgroup controls", "y"); err != nil {
+		t.Fatal(err)
+	}
+	msgid := "<newgroup-1@news.test>"
+	_, _ = c.Write([]byte("IHAVE " + msgid + "\r\n"))
+	if l := readLine(t, r); !strings.HasPrefix(l, "335 ") {
+		t.Fatalf("ihave cont %q", l)
+	}
+	art := "Path: other!not-for-mail\r\n" +
+		"From: group-admin@example.org\r\n" +
+		"Newsgroups: control.newgroup\r\n" +
+		"Subject: cmsg newgroup demo.control.test\r\n" +
+		"Control: newgroup demo.control.test\r\n" +
+		"Date: Mon, 01 Jan 2024 00:00:00 +0000\r\n" +
+		"Message-ID: " + msgid + "\r\n" +
+		"\r\n" +
+		"For your newsgroups file:\r\n" +
+		"demo.control.test\tDemo control-created group\r\n" +
+		".\r\n"
+	_, _ = c.Write([]byte(art))
+	if l := readLine(t, r); !strings.HasPrefix(l, "235 ") {
+		t.Fatalf("ihave ok %q", l)
+	}
+	g, err := st.GetGroup(context.Background(), "demo.control.test")
+	if err != nil || g == nil {
+		t.Fatalf("group missing: %v", err)
+	}
+	if g.Status != "y" || g.Origin != store.OriginControl {
+		t.Fatalf("%#v", g)
+	}
+	if g.Description != "Demo control-created group" {
+		t.Fatalf("desc %q", g.Description)
+	}
+}
