@@ -11,7 +11,7 @@ Caddy sits in front of the admin UI and obtains certificates automatically.
    OPENUSENET_HOSTNAME=news.example.org
    ADMIN_DOMAIN=news.example.org   # usually the same FQDN
    ACME_EMAIL=you@example.org
-   POSTGRES_PASSWORD=...           # and matching OPENUSENET_POSTGRES
+   POSTGRES_PASSWORD=...           # Compose builds the app DSN from POSTGRES_*
    ```
 
 3. Open firewall / security-group ports **80** (ACME HTTP-01), **443** (HTTPS), and **119** (NNTP).

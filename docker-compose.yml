@@ -29,7 +29,12 @@ services:
       OPENUSENET_ORGANIZATION: ${OPENUSENET_ORGANIZATION:-OpenUsenetServer}
       OPENUSENET_LISTEN: ${OPENUSENET_LISTEN:-:119}
       OPENUSENET_HTTP: ${OPENUSENET_HTTP:-:8080}
-      OPENUSENET_POSTGRES: ${OPENUSENET_POSTGRES:-postgres://openusenet:openusenet@postgres:5432/openusenet?sslmode=disable}
+      # Same credentials as the postgres service. Do not set a separate DSN in .env.
+      POSTGRES_USER: ${POSTGRES_USER:-openusenet}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-openusenet}
+      POSTGRES_DB: ${POSTGRES_DB:-openusenet}
+      POSTGRES_HOST: postgres
+      OPENUSENET_POSTGRES: postgres://${POSTGRES_USER:-openusenet}:${POSTGRES_PASSWORD:-openusenet}@postgres:5432/${POSTGRES_DB:-openusenet}?sslmode=disable
       OPENUSENET_MBOX_DIR: ${OPENUSENET_MBOX_DIR:-/var/spool/openusenet/archive}
       OPENUSENET_EXPORT_DIR: ${OPENUSENET_EXPORT_DIR:-/var/spool/openusenet/exports}
       OPENUSENET_BOOTSTRAP_ADMIN: ${OPENUSENET_BOOTSTRAP_ADMIN:-}

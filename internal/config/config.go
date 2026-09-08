@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"net"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -439,7 +440,10 @@ func applyEnv(cfg *Config) {
 	if v := os.Getenv("OPENUSENET_TLS_KEY"); v != "" {
 		cfg.TLS.KeyFile = v
 	}
-	if v := os.Getenv("OPENUSENET_POSTGRES"); v != "" {
+	if v := postgresURLFromEnv(); v != "" {
+		// Bundled Compose: POSTGRES_HOST=postgres. Ignores a stale OPENUSENET_POSTGRES.
+		cfg.Storage.Postgres = v
+	} else if v := os.Getenv("OPENUSENET_POSTGRES"); v != "" {
 		cfg.Storage.Postgres = v
 	}
 	if v := os.Getenv("OPENUSENET_MBOX_DIR"); v != "" {
@@ -502,6 +506,29 @@ func applyEnv(cfg *Config) {
 
 func (c Config) Idle() time.Duration {
 	return time.Duration(c.Limits.IdleSeconds) * time.Second
+}
+
+// postgresURLFromEnv builds a DSN from POSTGRES_* when POSTGRES_HOST is set
+// (Compose sets this to the postgres service name). User and password are URL-encoded.
+func postgresURLFromEnv() string {
+	host := strings.TrimSpace(os.Getenv("POSTGRES_HOST"))
+	user := strings.TrimSpace(os.Getenv("POSTGRES_USER"))
+	db := strings.TrimSpace(os.Getenv("POSTGRES_DB"))
+	if host == "" || user == "" || db == "" {
+		return ""
+	}
+	port := strings.TrimSpace(os.Getenv("POSTGRES_PORT"))
+	if port == "" {
+		port = "5432"
+	}
+	u := url.URL{
+		Scheme:   "postgres",
+		User:     url.UserPassword(user, os.Getenv("POSTGRES_PASSWORD")),
+		Host:     net.JoinHostPort(host, port),
+		Path:     "/" + strings.TrimPrefix(db, "/"),
+		RawQuery: "sslmode=disable",
+	}
+	return u.String()
 }
 
 func NormalizeListen(addr string) string {
