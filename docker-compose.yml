@@ -80,8 +80,8 @@ services:
     restart: unless-stopped
 
 volumes:
-  pgdata:
-  archive:
-  exports:
-  caddy_data:
-  caddy_config:
+  pgdata: {}
+  archive: {}
+  exports: {}
+  caddy_data: {}
+  caddy_config: {}
