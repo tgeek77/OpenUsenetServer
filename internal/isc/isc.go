@@ -17,7 +17,7 @@ import (
 
 const (
 	DefaultURL = "https://ftp.isc.org/usenet/CONFIG"
-	UserAgent  = "OpenUsenetServer/0.1.0 (Usenet config; +https://openusenet)"
+	UserAgent  = "OpenUsenetServer/0.5.0 (Usenet config; +https://openusenet)"
 )
 
 // Fetch downloads ISC active + newsgroups (gzip preferred) and merges them.

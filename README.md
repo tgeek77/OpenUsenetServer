@@ -1,5 +1,7 @@
 # OpenUsenetServer
 
+**Version 0.5.0**
+
 A modern easy-to-setup NNTP server based on [INN](https://www.eyrie.org/~eagle/software/inn/).
 
 Thanks to Russ Allbery, Julien Élie, and all of the developers of INN!
@@ -20,15 +22,20 @@ OUS speaks the same protocols and peering habits the network already uses, so yo
 
 ## Quick start (Docker Compose)
 
+On an **amd64** host with native Docker (no QEMU / buildx cross):
+
 ```bash
 cp .env.example .env
 # set OPENUSENET_HOSTNAME, ADMIN_DOMAIN, ACME_EMAIL for a public host
 # optional first admin: OPENUSENET_BOOTSTRAP_ADMIN=admin:changeme
+docker build -t jsevans/openusenet:0.5.0 -t jsevans/openusenet:latest .
 docker compose up -d
 printf 'CAPABILITIES\r\nQUIT\r\n' | nc -q 2 127.0.0.1 119
 # admin (local):  http://127.0.0.1:8080/
 # admin (public): https://$ADMIN_DOMAIN/   # Caddy + Let's Encrypt; see docs/tls.md
 ```
+
+`docker compose up --build -d` also works; Compose tags the image as `jsevans/openusenet:0.5.0`.
 
 Default seed group: `local.test`, plus the ISC `active` / `newsgroups` files from https://ftp.isc.org/usenet/CONFIG/ (pulled on `openusenet migrate`).
 
