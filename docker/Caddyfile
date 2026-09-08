@@ -1,0 +1,25 @@
+# Automatic HTTPS for the admin portal.
+#
+# Production: set ADMIN_DOMAIN to your public FQDN and ACME_EMAIL in .env.
+# Caddy will obtain a Let's Encrypt certificate (ports 80 + 443 must be reachable).
+#
+# Local / no public DNS: leave ADMIN_DOMAIN=localhost (default). Caddy uses an
+# internal CA; browsers will warn. Prefer http://127.0.0.1:8080/ for admin on a laptop.
+#
+# NNTPS (563) is not terminated here yet — see docs/tls.md.
+
+{
+	# Empty email is fine for localhost / internal TLS.
+	email {$ACME_EMAIL}
+}
+
+{$ADMIN_DOMAIN} {
+	encode gzip
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+		-Server
+	}
+	reverse_proxy openusenet:8080
+}

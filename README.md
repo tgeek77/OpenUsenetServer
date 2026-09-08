@@ -14,14 +14,17 @@ Live text articles are kept indefinitely. Use [archive exports](docs/backup-and-
 
 ```bash
 cp .env.example .env
-# set OPENUSENET_HOSTNAME to your FQDN when you have one
+# set OPENUSENET_HOSTNAME, ADMIN_DOMAIN, ACME_EMAIL for a public host
 # optional first admin: OPENUSENET_BOOTSTRAP_ADMIN=admin:changeme
 docker compose up -d
 printf 'CAPABILITIES\r\nQUIT\r\n' | nc -q 2 127.0.0.1 119
-# admin portal: http://127.0.0.1:8080/
+# admin (local):  http://127.0.0.1:8080/
+# admin (public): https://$ADMIN_DOMAIN/   # Caddy + Let's Encrypt; see docs/tls.md
 ```
 
 Default seed group: `local.test`, plus the canonical ISC `active` / `newsgroups` files from https://ftp.isc.org/usenet/CONFIG/ (pulled on `openusenet migrate`).
+
+Caddy terminates HTTPS for the admin portal on ports 80/443. Port 8080 is bound to localhost only. NNTPS (563) is not enabled in Compose yet; cleartext NNTP on 119 is what peers use today.
 
 ## Auth
 
@@ -64,6 +67,8 @@ Inbound IHAVE can be limited with `inbound.allow` (hostnames / IPs / CIDRs). Emp
 | `internal/admin` | Admin portal |
 | `internal/archive` | Live mbox spool + mbox.gz export/import |
 | `docs/backup-and-archive.md` | Backup / IA notes |
+| `docs/tls.md` | Caddy / Let's Encrypt admin HTTPS; NNTPS later |
 | `config.example.yml` | Local config |
+| `docker/Caddyfile` | Reverse proxy for admin HTTPS |
 
 License: GPL-3.0-or-later.

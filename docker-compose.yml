@@ -21,7 +21,8 @@ services:
         condition: service_healthy
     ports:
       - "119:119"
-      - "8080:8080"
+      # Admin HTTP is local-only; public HTTPS goes through Caddy on 443.
+      - "127.0.0.1:8080:8080"
     environment:
       OPENUSENET_HOSTNAME: ${OPENUSENET_HOSTNAME:-news.localhost}
       OPENUSENET_ORGANIZATION: ${OPENUSENET_ORGANIZATION:-OpenUsenetServer}
@@ -31,6 +32,9 @@ services:
       OPENUSENET_MBOX_DIR: ${OPENUSENET_MBOX_DIR:-/var/spool/openusenet/archive}
       OPENUSENET_EXPORT_DIR: ${OPENUSENET_EXPORT_DIR:-/var/spool/openusenet/exports}
       OPENUSENET_BOOTSTRAP_ADMIN: ${OPENUSENET_BOOTSTRAP_ADMIN:-}
+      OPENUSENET_INBOUND_OPEN: ${OPENUSENET_INBOUND_OPEN:-}
+      OPENUSENET_INBOUND_ALLOW: ${OPENUSENET_INBOUND_ALLOW:-}
+      OPENUSENET_REQUIRE_PEER_AUTH: ${OPENUSENET_REQUIRE_PEER_AUTH:-}
       OPENUSENET_CLEANFEED: ${OPENUSENET_CLEANFEED:-true}
       OPENUSENET_CLEANFEED_MODE: ${OPENUSENET_CLEANFEED_MODE:-reject}
       OPENUSENET_CLEANFEED_COMMAND: ${OPENUSENET_CLEANFEED_COMMAND:-perl /usr/local/lib/openusenet/cleanfeed-filter.pl}
@@ -48,7 +52,29 @@ services:
       retries: 6
     restart: unless-stopped
 
+  # HTTPS for the admin portal. Public FQDN → Let's Encrypt; localhost → internal CA.
+  # See docs/tls.md. NNTPS (563) is not handled here yet.
+  caddy:
+    image: caddy:2-alpine
+    depends_on:
+      openusenet:
+        condition: service_healthy
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      ADMIN_DOMAIN: ${ADMIN_DOMAIN:-localhost}
+      ACME_EMAIL: ${ACME_EMAIL:-}
+    volumes:
+      - ./docker/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    restart: unless-stopped
+
 volumes:
   pgdata:
   archive:
   exports:
+  caddy_data:
+  caddy_config:
