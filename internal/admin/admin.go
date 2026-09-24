@@ -300,6 +300,7 @@ func (p *Portal) status(w http.ResponseWriter, r *http.Request, _ store.User) {
 		"peers":           peers,
 		"peer_status":     ps,
 		"feed":            p.feeder.Stats(),
+		"feed_queue":      feedQueueStats(ctx, p.st),
 		"postgres":        redactURL(p.cfg.Storage.Postgres),
 		"mbox_dir":        p.cfg.Storage.MBoxDir,
 		"export_dir":      p.cfg.Archive.ExportDir,
@@ -312,10 +313,10 @@ func (p *Portal) status(w http.ResponseWriter, r *http.Request, _ store.User) {
 			"user_binary_posts_per_day": p.cfg.Retention.UserBinaryPostsPerDay,
 		},
 		"limits": map[string]any{
-			"max_art_size":      p.cfg.Limits.MaxArtSize,
-			"art_cutoff_days":   p.cfg.Limits.ArtCutoffDays,
-			"remember_rejects":  p.cfg.Limits.RememberRejects,
-			"idle_seconds":      p.cfg.Limits.IdleSeconds,
+			"max_art_size":     p.cfg.Limits.MaxArtSize,
+			"art_cutoff_days":  p.cfg.Limits.ArtCutoffDays,
+			"remember_rejects": p.cfg.Limits.RememberRejects,
+			"idle_seconds":     p.cfg.Limits.IdleSeconds,
 		},
 		"inbound": map[string]any{
 			"open":              inbound.Open(p.cfg, peerHosts),
@@ -649,6 +650,17 @@ func (p *Portal) peersOurSide(w http.ResponseWriter, r *http.Request, _ store.Us
 	})
 }
 
+func feedQueueStats(ctx context.Context, st store.Store) store.FeedQueueStats {
+	if st == nil {
+		return store.FeedQueueStats{}
+	}
+	q, err := st.FeedQueueStats(ctx)
+	if err != nil {
+		return store.FeedQueueStats{}
+	}
+	return q
+}
+
 func (p *Portal) nntpPort() int {
 	addr := strings.TrimSpace(p.cfg.Listen.NNTP)
 	if addr == "" {
@@ -688,7 +700,14 @@ func (p *Portal) peersImportINN(w http.ResponseWriter, r *http.Request, _ store.
 	if fileType == "" {
 		fileType = "auto"
 	}
-	spec, warns := inn.ParseFile(in.Text, fileType)
+	var spec *inn.Spec
+	var warns, present []string
+	switch strings.ToLower(fileType) {
+	case "", "auto", "paste", "email":
+		spec, warns, present = inn.ParsePaste(in.Text)
+	default:
+		spec, warns = inn.ParseFile(in.Text, fileType)
+	}
 	if spec == nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "parse failed", "warnings": warns})
 		return
@@ -700,6 +719,7 @@ func (p *Portal) peersImportINN(w http.ResponseWriter, r *http.Request, _ store.
 	if !in.Apply {
 		writeJSON(w, http.StatusOK, map[string]any{
 			"preview":  preview,
+			"present":  present,
 			"warnings": warns,
 			"snippets": inn.Snippets(*spec),
 		})

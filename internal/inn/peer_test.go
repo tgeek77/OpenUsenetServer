@@ -33,6 +33,68 @@ func TestParseEternalSeptember(t *testing.T) {
 	}
 }
 
+func TestParsePasteEmails(t *testing.T) {
+	neodome := `
+## innfeed.conf
+peer neodome.net {
+    ip-name: news-in.neodome.net
+    port-number: 119
+}
+
+## newsfeeds
+news.neodome.net/news.neodome.net\
+  :*,!local*\
+  :Ap,Tm,<65536:innfeed!
+
+## incoming.conf
+peer neodome.net {
+  hostname: news-out.neodome.net
+}
+`
+	s, warns, present := ParsePaste(neodome)
+	if s == nil {
+		t.Fatal(warns)
+	}
+	if s.OutgoingHost != "news-in.neodome.net" || s.IncomingHost != "news-out.neodome.net" {
+		t.Fatalf("hosts out=%q in=%q", s.OutgoingHost, s.IncomingHost)
+	}
+	if s.Name != "news.neodome.net" || s.PathToken != "news.neodome.net" {
+		t.Fatalf("name=%q path=%q", s.Name, s.PathToken)
+	}
+	if s.Patterns != "*,!local*" || s.Flags != "Ap,Tm,<65536" || s.Port != 119 {
+		t.Fatalf("pat=%q flags=%q port=%d", s.Patterns, s.Flags, s.Port)
+	}
+	if len(present) == 0 {
+		t.Fatal("expected present fields")
+	}
+
+	aulich := `
+I use INN with CF-NG and PF-NG
+
+Details:
+
+news.aulich.net
+
+IPV4: 85.31.187.13
+
+IPV6: 2a02:180:2:83::7
+
+Pattern: :*,!unidata.*,!control.*,!junk/!local\
+`
+	s, _, present = ParsePaste(aulich)
+	if s == nil || s.Name != "news.aulich.net" || s.OutgoingHost != "news.aulich.net" {
+		t.Fatalf("aulich %#v", s)
+	}
+	if s.Patterns != "*,!unidata.*,!control.*,!junk" || s.Distributions != "!local" {
+		t.Fatalf("pat=%q dist=%q", s.Patterns, s.Distributions)
+	}
+	joined := strings.Join(s.Warnings, " ")
+	if !strings.Contains(joined, "85.31.187.13") || !strings.Contains(joined, "2a02:180:2:83::7") {
+		t.Fatal(joined)
+	}
+	_ = present
+}
+
 func TestParseIncomingPassword(t *testing.T) {
 	incoming := `peer news-b {
     hostname:       news-b.example

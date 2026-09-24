@@ -310,19 +310,12 @@ section.panel h2 { margin: 0 0 0.6rem; font-size: 1rem; }
         <label>Outgoing password (we AUTHINFO to them) <input id="poutpass" type="password" autocomplete="new-password" placeholder="optional"></label>
         <label>Notes <input id="pnotes"></label>
       </div>
-      <h3>INN file</h3>
+      <h3>Paste from the peer</h3>
+      <p class="help">Paste the whole email. Hosts, ports, patterns, and newsfeeds lines are picked out and filled in above. Fields the paste does not mention are left as they are.</p>
+      <textarea id="psnippet" rows="10" placeholder="Paste incoming.conf, innfeed.conf, newsfeeds, or the peering email…"></textarea>
       <div class="row">
-        <label>Configure on our server
-          <select id="pfile">
-            <option value="incoming">incoming.conf</option>
-            <option value="innfeed">innfeed.conf</option>
-            <option value="newsfeeds">newsfeeds</option>
-          </select>
-        </label>
-        <button class="secondary" id="pcopy">Copy snippet</button>
-        <button class="secondary" id="pimport">Apply paste below into fields</button>
+        <button class="secondary" id="pimport">Fill fields from paste</button>
       </div>
-      <textarea id="psnippet" rows="10" placeholder="Paste incoming.conf, innfeed.conf, or newsfeeds snippet here…"></textarea>
       <p class="mono" id="pmsg"></p>
       <h3>Send to peer (our side)</h3>
       <div class="row">
@@ -905,25 +898,24 @@ function fillPeerForm(p) {
   $("pnotes").value = p.notes || "";
 }
 
-function localSnippetsFromFields() {
-  const p = peerFieldsFromForm();
-  const name = p.name || "peer";
-  const site = p.path_token ? name + "/" + p.path_token : name;
-  const dist = p.distributions ? "/" + p.distributions : "";
-  const inpass = p.incoming_password ? `\n    password:       ${p.incoming_password}` : "";
-  return {
-    incoming: `peer ${name} {\n    hostname:       ${p.incoming_host}${inpass}\n}\n`,
-    innfeed: `peer ${name} {\n    ip-name:        ${p.host}\n    port-number:    ${p.port}\n}\n`,
-    newsfeeds: `${site}:${p.patterns}${dist}:${p.flags}:innfeed!\n`,
-  };
-}
-
 function refreshPeerSnippet() {
-  const f = $("pfile").value;
-  const local = localSnippetsFromFields();
-  $("psnippet").value = peerSnippets[f] || local[f] || "";
   const of = $("poursfile").value;
   $("pours").value = peerOurSide[of] || "";
+}
+
+function applyPeerPreview(p, present) {
+  const has = (k) => !present || !present.length || present.indexOf(k) >= 0;
+  const set = (id, key, v) => { if (has(key) && v != null && String(v) !== "") $(id).value = v; };
+  set("pname", "name", p.name);
+  set("pincoming", "incoming_host", p.incoming_host);
+  set("poutgoing", "host", p.host);
+  set("ppath", "path_token", p.path_token);
+  set("ppatterns", "patterns", p.patterns);
+  set("pdist", "distributions", p.distributions);
+  set("pflags", "flags", p.flags);
+  set("pinpass", "incoming_password", p.incoming_password);
+  if (has("port") && p.port) $("pport").value = p.port;
+  if (p.notes) $("pnotes").value = p.notes;
 }
 
 async function openPeerModal(id) {
@@ -956,16 +948,10 @@ $("exfile").onchange = () => { $("exsnippet").value = exportOurSide[$("exfile").
 $("excopy").onclick = async () => { await navigator.clipboard.writeText($("exsnippet").value); };
 $("excopyall").onclick = async () => { await refreshExportPanel(); await navigator.clipboard.writeText(exportAllText()); };
 $("pcancel").onclick = () => { $("peermodal").classList.add("hidden"); peerEdit = null; };
-$("peermodal").onclick = (e) => { if (e.target.id === "peermodal") $("pcancel").click(); };
-$("pfile").onchange = refreshPeerSnippet;
-$("poursfile").onchange = refreshPeerSnippet;
-["pname","pincoming","poutgoing","pport","ppath","ppatterns","pdist","pflags"].forEach(id => {
-  $(id).addEventListener("input", refreshPeerSnippet);
+$("peermodal").addEventListener("mousedown", (e) => {
+  if (e.target.id === "peermodal") $("pcancel").click();
 });
-$("pcopy").onclick = async () => {
-  await navigator.clipboard.writeText($("psnippet").value);
-  $("pmsg").textContent = "copied";
-};
+$("poursfile").onchange = refreshPeerSnippet;
 $("pcopyours").onclick = async () => {
   await navigator.clipboard.writeText($("pours").value);
   $("pmsg").textContent = "copied our side";
@@ -976,11 +962,11 @@ $("pimport").onclick = async () => {
     const d = await j("/api/peers/import-inn", {method:"POST", headers:{"Content-Type":"application/json"},
       body: JSON.stringify({
         text: $("psnippet").value,
-        file_type: $("pfile").value,
+        file_type: "auto",
         peer_id: peerEdit ? peerEdit.id : 0,
         apply: false,
       })});
-    if (d.preview) fillPeerForm(d.preview);
+    if (d.preview) applyPeerPreview(d.preview, d.present || []);
     if (d.snippets) peerSnippets = d.snippets;
     refreshPeerSnippet();
     $("pmsg").textContent = (d.warnings && d.warnings.length) ? d.warnings.join("; ") : "fields updated from paste";
@@ -1053,7 +1039,12 @@ async function loadStatus() {
      <td>${p.has_incoming_password ? "auth" : "—"}</td>
      <td><button class="secondary" data-edit="${p.id}">Edit…</button></td></tr>`
   ).join("") || `<tr><td colspan="7">No peers — add one to start peering</td></tr>`;
-  $("feed").textContent = s.feed && s.feed.last ? ("last IHAVE " + s.feed.last) : "";
+  const q = s.feed_queue || {};
+  const feedBits = [];
+  if (s.feed && s.feed.last) feedBits.push(s.feed.last);
+  if (q.depth) feedBits.push("queued " + q.depth);
+  if (s.feed && s.feed.fail) feedBits.push("failed attempts " + s.feed.fail);
+  $("feed").textContent = feedBits.join(" · ");
   $("peers").onclick = async (e) => {
     const b = e.target.closest("button[data-edit]");
     if (!b) return;

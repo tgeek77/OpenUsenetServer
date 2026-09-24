@@ -132,16 +132,22 @@ func (f *Feeder) drainOnce(ctx context.Context) {
 		return
 	}
 	for _, it := range items {
-		if err := f.deliver(ctx, it); err != nil {
+		accepted, summary, err := f.deliver(ctx, it)
+		if err != nil {
 			f.fail.Add(1)
 			backoff := retryBackoff(it.Attempts)
 			_ = f.arts.FailFeed(ctx, it.ID, err.Error(), backoff)
+			f.last.Store(fmt.Sprintf("error %s -> peer %d: %s", it.MessageID, it.PeerID, err.Error()))
 			f.log.Printf("feed %s peer=%d: %v (retry in %s)", it.MessageID, it.PeerID, err, backoff)
 			continue
 		}
 		_ = f.arts.CompleteFeed(ctx, it.ID)
-		f.ok.Add(1)
-		f.last.Store(fmt.Sprintf("%s -> peer %d", it.MessageID, it.PeerID))
+		if summary != "" {
+			f.last.Store(summary)
+		}
+		if accepted {
+			f.ok.Add(1)
+		}
 	}
 }
 
@@ -156,24 +162,27 @@ func retryBackoff(attempts int) time.Duration {
 	return d
 }
 
-func (f *Feeder) deliver(ctx context.Context, it store.FeedQueueItem) error {
+func (f *Feeder) deliver(ctx context.Context, it store.FeedQueueItem) (accepted bool, summary string, err error) {
 	peer, err := f.arts.GetPeer(ctx, it.PeerID)
 	if err != nil {
-		return err
+		return false, "", err
+	}
+	label := fmt.Sprintf("peer %d", it.PeerID)
+	if peer != nil && peer.Name != "" {
+		label = peer.Name
 	}
 	if peer == nil || !peer.Enabled {
 		_ = f.arts.CompleteFeed(ctx, it.ID)
-		return nil
+		return false, fmt.Sprintf("not sent %s -> %s (peer disabled)", it.MessageID, label), nil
 	}
 	art, err := f.arts.GetByMsgID(ctx, it.MessageID)
 	if err != nil {
-		return err
+		return false, "", err
 	}
 	if art == nil {
-		return nil
+		return false, fmt.Sprintf("not sent %s -> %s (article missing)", it.MessageID, label), nil
 	}
 	wire := []byte(art.Headers + "\r\n\r\n" + art.Body)
-	// Re-check flags at send time (size / active file may matter).
 	parsed, _ := article.Parse(wire)
 	view := ViewFromArticle(parsed, len(wire))
 	if parsed == nil {
@@ -181,9 +190,17 @@ func (f *Feeder) deliver(ctx context.Context, it store.FeedQueueItem) error {
 	}
 	view.GroupStatus = f.groupStatus(ctx, view.Groups)
 	if !PeerWantsArticle(*peer, view) {
-		return nil // drop quietly — peer no longer wants it
+		return false, fmt.Sprintf("not sent %s -> %s (patterns/flags)", it.MessageID, label), nil
 	}
-	return f.deliverArticle(*peer, it.MessageID, wire)
+	accepted, err = f.deliverArticle(*peer, it.MessageID, wire)
+	if err != nil {
+		return false, "", err
+	}
+	where := peer.Addr()
+	if accepted {
+		return true, fmt.Sprintf("accepted %s -> %s (%s)", it.MessageID, label, where), nil
+	}
+	return false, fmt.Sprintf("refused %s -> %s (%s)", it.MessageID, label, where), nil
 }
 
 func skipPeer(cfg config.Config, p store.Peer, path string) bool {

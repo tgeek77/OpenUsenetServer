@@ -66,31 +66,228 @@ func slugName(host string) string {
 }
 
 // ParseFile extracts peer fields from one INN file snippet.
-// kind is incoming, innfeed, or newsfeeds.
+// kind is incoming, innfeed, or newsfeeds. Any other kind (including auto)
+// scans the whole paste for every fragment it can find.
 func ParseFile(text, kind string) (*Spec, []string) {
 	kind = strings.ToLower(strings.TrimSpace(kind))
 	switch kind {
 	case "incoming", "incoming.conf":
-		return parseIncomingFile(text)
+		return parseIncomingFile(unfoldContinued(text))
 	case "innfeed", "innfeed.conf":
-		return parseInnfeedFile(text)
+		return parseInnfeedFile(unfoldContinued(text))
 	case "newsfeeds", "newsfeed":
-		return parseNewsfeedsFile(text)
+		return parseNewsfeedsFile(unfoldContinued(text))
 	default:
-		drafts := Parse(text)
-		if len(drafts) == 0 {
-			return nil, []string{"no peer found in paste"}
+		spec, warns, _ := ParsePaste(text)
+		return spec, warns
+	}
+}
+
+// ParsePaste pulls peer fields out of a mixed paste: INN fragments, backslash
+// continuations, and informal peering mail (hostname, IPV4, IPV6, Pattern).
+// present lists JSON field names that the paste actually contained, so callers
+// can fill those without wiping fields the paste never mentioned.
+func ParsePaste(text string) (spec *Spec, warns []string, present []string) {
+	text = unfoldContinued(text)
+	var s Spec
+	found := false
+	mark := func(field string) {
+		found = true
+		for _, p := range present {
+			if p == field {
+				return
+			}
 		}
-		d := drafts[0]
-		return &Spec{
-			Name:         slugName(d.Host),
-			IncomingHost: d.Host,
-			OutgoingHost: d.Host,
-			Port:         d.Port,
-			Patterns:     "*",
-			Flags:        "Tm",
-			Warnings:     d.Warnings,
-		}, d.Warnings
+		present = append(present, field)
+	}
+
+	sc := bufio.NewScanner(strings.NewReader(text))
+	inPeer := ""
+	for sc.Scan() {
+		line := strings.TrimSpace(sc.Text())
+		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, "//") {
+			continue
+		}
+		if m := rePeerBlock.FindStringSubmatch(line); m != nil {
+			inPeer = strings.Trim(m[1], `"`)
+			if s.Name == "" {
+				s.Name = inPeer
+				mark("name")
+			}
+			continue
+		}
+		if inPeer != "" {
+			if strings.HasPrefix(line, "}") {
+				inPeer = ""
+				continue
+			}
+			if m := reIPName.FindStringSubmatch(line); m != nil {
+				s.OutgoingHost = strings.Trim(m[1], `";`)
+				mark("host")
+				continue
+			}
+			if m := reHostname.FindStringSubmatch(line); m != nil {
+				s.IncomingHost = strings.Trim(m[1], `";`)
+				mark("incoming_host")
+				continue
+			}
+			if m := rePortNumber.FindStringSubmatch(line); m != nil {
+				s.Port, _ = strconv.Atoi(m[1])
+				mark("port")
+				continue
+			}
+			if m := rePassword.FindStringSubmatch(line); m != nil {
+				s.Password = strings.Trim(m[1], `";`)
+				mark("incoming_password")
+				continue
+			}
+			continue
+		}
+		if m := rePatternLine.FindStringSubmatch(line); m != nil {
+			applyPatternField(&s, m[1])
+			mark("patterns")
+			if s.Distributions != "" {
+				mark("distributions")
+			}
+			warns = appendUnique(warns, "patterns/flags applied on offer")
+			continue
+		}
+		if m := reIPv4Line.FindStringSubmatch(line); m != nil {
+			if s.OutgoingHost == "" && s.IncomingHost == "" {
+				s.OutgoingHost = m[1]
+				mark("host")
+			}
+			warns = appendUnique(warns, "IPV4 "+m[1])
+			continue
+		}
+		if m := reIPv6Line.FindStringSubmatch(line); m != nil {
+			warns = appendUnique(warns, "IPV6 "+m[1])
+			continue
+		}
+		if applyNewsfeedsLine(&s, line) {
+			mark("name")
+			if s.PathToken != "" {
+				mark("path_token")
+			}
+			mark("patterns")
+			if s.Distributions != "" {
+				mark("distributions")
+			}
+			if s.Flags != "" {
+				mark("flags")
+			}
+			warns = appendUnique(warns, "patterns/flags applied on offer")
+			continue
+		}
+		if reBareHost.MatchString(line) {
+			if s.Name == "" {
+				s.Name = line
+				mark("name")
+			}
+			if s.IncomingHost == "" || isIPLiteral(s.IncomingHost) {
+				s.IncomingHost = line
+				mark("incoming_host")
+			}
+			if s.OutgoingHost == "" || isIPLiteral(s.OutgoingHost) {
+				s.OutgoingHost = line
+				mark("host")
+			}
+		}
+	}
+	if !found {
+		return nil, []string{"no peer found in paste"}, nil
+	}
+	s.Warnings = warns
+	s.Defaults()
+	return &s, warns, present
+}
+
+var (
+	rePatternLine = regexp.MustCompile(`(?i)^pattern\s*:\s*(.+)$`)
+	reIPv4Line    = regexp.MustCompile(`(?i)^ipv4\s*:\s*(\d{1,3}(?:\.\d{1,3}){3})`)
+	reIPv6Line    = regexp.MustCompile(`(?i)^ipv6\s*:\s*([0-9A-Fa-f:]+)`)
+	reBareHost    = regexp.MustCompile(`^[A-Za-z0-9](?:[A-Za-z0-9-]{0,62}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,62}[A-Za-z0-9])?)+$`)
+)
+
+func unfoldContinued(text string) string {
+	var b strings.Builder
+	sc := bufio.NewScanner(strings.NewReader(text))
+	pending := ""
+	for sc.Scan() {
+		line := strings.TrimRight(sc.Text(), " \t")
+		if pending != "" {
+			line = pending + strings.TrimSpace(line)
+			pending = ""
+		}
+		if strings.HasSuffix(line, `\`) {
+			pending = strings.TrimRight(strings.TrimSuffix(line, `\`), " \t")
+			continue
+		}
+		b.WriteString(line)
+		b.WriteByte('\n')
+	}
+	if pending != "" {
+		b.WriteString(pending)
+		b.WriteByte('\n')
+	}
+	return b.String()
+}
+
+func applyNewsfeedsLine(s *Spec, line string) bool {
+	if strings.HasPrefix(strings.ToUpper(line), "ME:") {
+		return false
+	}
+	m := reNewsfeeds.FindStringSubmatch(line)
+	if m == nil {
+		return false
+	}
+	// The fourth field of a newsfeeds line is the feed program (innfeed!), not a host.
+	if !strings.Contains(m[4], "!") && !strings.Contains(strings.ToLower(m[4]), "innfeed") {
+		return false
+	}
+	sitename, patField, flags := m[1], m[2], m[3]
+	name := sitename
+	pathToken := ""
+	if i := strings.Index(sitename, "/"); i >= 0 {
+		name = sitename[:i]
+		pathToken = sitename[i+1:]
+	}
+	if name != "" {
+		s.Name = name
+	}
+	if pathToken != "" {
+		s.PathToken = pathToken
+	}
+	applyPatternField(s, patField)
+	s.Flags = flags
+	return true
+}
+
+func isIPLiteral(host string) bool {
+	if strings.Contains(host, ":") {
+		return true
+	}
+	if host == "" || strings.ContainsAny(host, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ") {
+		return false
+	}
+	dots := strings.Count(host, ".")
+	return dots == 3
+}
+
+func applyPatternField(s *Spec, patField string) {
+	patField = strings.TrimSpace(patField)
+	patField = strings.TrimPrefix(patField, ":")
+	patField = strings.TrimRight(patField, `\`)
+	patterns, distribs := patField, ""
+	if i := strings.LastIndex(patField, "/"); i >= 0 {
+		patterns = patField[:i]
+		distribs = patField[i+1:]
+	}
+	if patterns != "" {
+		s.Patterns = patterns
+	}
+	if distribs != "" {
+		s.Distributions = distribs
 	}
 }
 
