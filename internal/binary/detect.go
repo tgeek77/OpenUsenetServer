@@ -98,12 +98,28 @@ func headerValue(headers, name string) string {
 	return ""
 }
 
-// bulkBase64 detects long runs of Base64-looking lines.
+// bulkBase64 detects long runs of Base64-looking lines outside PGP armor.
+// OpenPGP signatures/messages use Base64 radix-64 and must not count as
+// filesharing binaries (e.g. linux.debian.bugs.rc multipart/signed mail).
 func bulkBase64(body string) bool {
 	lines := strings.Split(body, "\n")
 	run := 0
+	inPGP := false
 	for _, line := range lines {
 		line = strings.TrimRight(line, "\r")
+		trim := strings.TrimSpace(line)
+		if isPGPArmorBegin(trim) {
+			inPGP = true
+			run = 0
+			continue
+		}
+		if inPGP {
+			if isPGPArmorEnd(trim) {
+				inPGP = false
+			}
+			run = 0
+			continue
+		}
 		if isBase64Line(line) {
 			run++
 			if run >= 8 {
@@ -114,6 +130,14 @@ func bulkBase64(body string) bool {
 		run = 0
 	}
 	return false
+}
+
+func isPGPArmorBegin(line string) bool {
+	return strings.HasPrefix(line, "-----BEGIN PGP ")
+}
+
+func isPGPArmorEnd(line string) bool {
+	return strings.HasPrefix(line, "-----END PGP ")
 }
 
 func isBase64Line(line string) bool {
