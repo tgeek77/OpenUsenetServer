@@ -216,9 +216,10 @@ func skipPeer(cfg config.Config, p store.Peer, path string) bool {
 		return true
 	}
 	flags := ParseFlags(p.Flags)
-	// Always suppress if the peer's Path identity is already in Path.
-	if article.PathContains(path, token) {
-		return true
+	for _, token := range strings.Split(token, ",") {
+		if article.PathContains(path, token) {
+			return true
+		}
 	}
 	if !flags.PathOnlyExclude {
 		// Without Ap, also treat sitename and host as Path exclusions.

@@ -102,6 +102,7 @@ func ParsePaste(text string) (spec *Spec, warns []string, present []string) {
 	}
 
 	sc := bufio.NewScanner(strings.NewReader(text))
+	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	inPeer := ""
 	for sc.Scan() {
 		line := strings.TrimSpace(sc.Text())
@@ -164,9 +165,12 @@ func ParsePaste(text string) (spec *Spec, warns []string, present []string) {
 			warns = appendUnique(warns, "IPV6 "+m[1])
 			continue
 		}
+		beforeName, beforePath := s.Name, s.PathToken
 		if applyNewsfeedsLine(&s, line) {
-			mark("name")
-			if s.PathToken != "" {
+			if s.Name != "" && s.Name != beforeName {
+				mark("name")
+			}
+			if s.PathToken != "" && s.PathToken != beforePath {
 				mark("path_token")
 			}
 			mark("patterns")
@@ -212,6 +216,7 @@ var (
 func unfoldContinued(text string) string {
 	var b strings.Builder
 	sc := bufio.NewScanner(strings.NewReader(text))
+	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	pending := ""
 	for sc.Scan() {
 		line := strings.TrimRight(sc.Text(), " \t")
@@ -233,24 +238,46 @@ func unfoldContinued(text string) string {
 	return b.String()
 }
 
+// splitNewsfeedsFields parses the four colon-separated fields INN requires.
+// Flags and param may be empty, as in "site:patterns::".
+func splitNewsfeedsFields(line string) (site, patterns, flags, param string, ok bool) {
+	parts := strings.SplitN(line, ":", 4)
+	if len(parts) < 4 || strings.TrimSpace(parts[0]) == "" {
+		return "", "", "", "", false
+	}
+	return strings.TrimSpace(parts[0]), parts[1], parts[2], parts[3], true
+}
+
 func applyNewsfeedsLine(s *Spec, line string) bool {
-	if strings.HasPrefix(strings.ToUpper(line), "ME:") {
+	site, patField, flags, param, ok := splitNewsfeedsFields(line)
+	if !ok {
 		return false
 	}
-	m := reNewsfeeds.FindStringSubmatch(line)
-	if m == nil {
-		return false
-	}
-	// The fourth field of a newsfeeds line is the feed program (innfeed!), not a host.
-	if !strings.Contains(m[4], "!") && !strings.Contains(strings.ToLower(m[4]), "innfeed") {
-		return false
-	}
-	sitename, patField, flags := m[1], m[2], m[3]
-	name := sitename
+	name := site
 	pathToken := ""
-	if i := strings.Index(sitename, "/"); i >= 0 {
-		name = sitename[:i]
-		pathToken = sitename[i+1:]
+	if i := strings.Index(site, "/"); i >= 0 {
+		name = site[:i]
+		pathToken = site[i+1:]
+	}
+	// ME is this server's subscription. The slash list is path exclusions
+	// (INN site/exclude), not a sitename. Program feeds such as ninpaths!
+	// are local and are not peers.
+	if strings.EqualFold(name, "ME") {
+		applyPatternField(s, patField)
+		if strings.TrimSpace(flags) != "" {
+			s.Flags = strings.TrimSpace(flags)
+		}
+		if pathToken != "" {
+			s.PathToken = pathToken
+		}
+		return true
+	}
+	// name! entries such as ninpaths! run a local program. They are not peers.
+	if strings.HasSuffix(name, "!") && !strings.Contains(strings.ToLower(param), "innfeed") {
+		return false
+	}
+	if !strings.Contains(param, "!") && !strings.Contains(strings.ToLower(param), "innfeed") {
+		return false
 	}
 	if name != "" {
 		s.Name = name
@@ -259,7 +286,9 @@ func applyNewsfeedsLine(s *Spec, line string) bool {
 		s.PathToken = pathToken
 	}
 	applyPatternField(s, patField)
-	s.Flags = flags
+	if strings.TrimSpace(flags) != "" {
+		s.Flags = strings.TrimSpace(flags)
+	}
 	return true
 }
 
@@ -279,7 +308,7 @@ func applyPatternField(s *Spec, patField string) {
 	patField = strings.TrimPrefix(patField, ":")
 	patField = strings.TrimRight(patField, `\`)
 	patterns, distribs := patField, ""
-	if i := strings.LastIndex(patField, "/"); i >= 0 {
+	if i := strings.Index(patField, "/"); i >= 0 {
 		patterns = patField[:i]
 		distribs = patField[i+1:]
 	}
@@ -369,35 +398,26 @@ func parseInnfeedFile(text string) (*Spec, []string) {
 
 func parseNewsfeedsFile(text string) (*Spec, []string) {
 	var warns []string
+	var s Spec
+	found := false
 	sc := bufio.NewScanner(strings.NewReader(text))
+	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	for sc.Scan() {
 		line := strings.TrimSpace(sc.Text())
-		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(strings.ToUpper(line), "ME:") {
+		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		if m := reNewsfeeds.FindStringSubmatch(line); m != nil {
-			sitename, patField, flags := m[1], m[2], m[3]
-			name := sitename
-			pathToken := ""
-			if i := strings.Index(sitename, "/"); i >= 0 {
-				name = sitename[:i]
-				pathToken = sitename[i+1:]
-			}
-			patterns, distribs := patField, ""
-			if i := strings.LastIndex(patField, "/"); i >= 0 {
-				patterns = patField[:i]
-				distribs = patField[i+1:]
-			}
+		if applyNewsfeedsLine(&s, line) {
+			found = true
 			warns = appendUnique(warns, "patterns/flags applied on offer")
-			s := &Spec{
-				Name: name, PathToken: pathToken, Patterns: patterns, Distributions: distribs,
-				Flags: flags, Port: 119, Warnings: warns,
-			}
-			s.Defaults()
-			return s, warns
 		}
 	}
-	return nil, []string{"newsfeeds: no feed line found"}
+	if !found {
+		return nil, []string{"newsfeeds: no feed line found"}
+	}
+	s.Warnings = warns
+	s.Defaults()
+	return &s, warns
 }
 
 // FormatIncoming renders an incoming.conf peer block for our server.

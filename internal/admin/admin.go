@@ -597,9 +597,17 @@ func (p *Portal) peers(w http.ResponseWriter, r *http.Request, _ store.User) {
 	}
 }
 
+func firstExclusion(pathToken string) string {
+	pathToken = strings.TrimSpace(pathToken)
+	if i := strings.Index(pathToken, ","); i >= 0 {
+		pathToken = pathToken[:i]
+	}
+	return strings.TrimSpace(pathToken)
+}
+
 func (p *Portal) peerDetail(peer store.Peer) map[string]any {
 	spec := peer.INNSpec()
-	remote := strings.TrimSpace(peer.PathToken)
+	remote := firstExclusion(peer.PathToken)
 	if remote == "" {
 		remote = strings.TrimSpace(peer.IncomingHost)
 	}

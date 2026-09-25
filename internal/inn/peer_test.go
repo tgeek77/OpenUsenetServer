@@ -95,6 +95,51 @@ Pattern: :*,!unidata.*,!control.*,!junk/!local\
 	_ = present
 }
 
+func TestParsePasteMEFilter(t *testing.T) {
+	text := `ME/news.neodome.net,news.freedyn.de,news.newsdemon.com,news.open-news-network.org\
+	:*,\
+	!alt.binaries.warez.*,@alt.binaries.warez.*,\
+	!alt.binaries.pictures.erotica.nude.runaway-girls,\
+	@alt.binaries.pictures.erotica.nude.runaway-girls,\
+	!junk,\
+	!control*,\
+	!local*,\
+	!foo.*::
+
+ninpaths!:*:Tc,WP:/var/news/bin/ninpaths -p -d /var/log/news/inpaths.%d
+`
+	s, warns, present := ParsePaste(text)
+	if s == nil {
+		t.Fatal(warns)
+	}
+	if s.Name == "ME" || strings.Contains(s.Name, "neodome") {
+		t.Fatalf("ME entry must not become the peer name: %q", s.Name)
+	}
+	for _, want := range []string{"*", "!alt.binaries.warez.*", "@alt.binaries.warez.*", "!foo.*", "!local*"} {
+		if !strings.Contains(s.Patterns, want) {
+			t.Fatalf("patterns missing %q: %s", want, s.Patterns)
+		}
+	}
+	if strings.Contains(s.Patterns, "ninpaths") || s.Flags == "Tc,WP" {
+		t.Fatalf("program feed leaked into peer: pat=%q flags=%q", s.Patterns, s.Flags)
+	}
+	if !contains(present, "patterns") || contains(present, "name") {
+		t.Fatalf("present=%v", present)
+	}
+	if !strings.Contains(s.PathToken, "news.neodome.net") || !strings.Contains(s.PathToken, "news.open-news-network.org") {
+		t.Fatalf("path exclusions %q", s.PathToken)
+	}
+}
+
+func contains(ss []string, want string) bool {
+	for _, s := range ss {
+		if s == want {
+			return true
+		}
+	}
+	return false
+}
+
 func TestParseIncomingPassword(t *testing.T) {
 	incoming := `peer news-b {
     hostname:       news-b.example
