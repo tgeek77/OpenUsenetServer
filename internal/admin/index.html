@@ -6,9 +6,9 @@
 <title>OpenUsenet</title>
 <style>
 :root {
-  --bg: #12141a; --panel: #1b1f2a; --ink: #e8eadf; --muted: #9aa3b5;
-  --line: #2a3140; --accent: #9bbfb3; --warn: #ffb020; --bad: #ff6b6b; --ok: #6ee7a8;
-  --unread: #d5dde6;
+  --bg: #12141a; --panel: #1b1f2a; --ink: #f4f6f8; --muted: #d0d7e2;
+  --line: #3a4458; --accent: #e4c98a; --warn: #ffb020; --bad: #ff6b6b; --ok: #8ee7b0;
+  --unread: #fff6d0;
 }
 * { box-sizing: border-box; }
 body { margin: 0; font: 15px/1.45 "IBM Plex Sans", "Segoe UI", sans-serif; background: var(--bg); color: var(--ink); height: 100vh; display: flex; flex-direction: column; }
@@ -27,7 +27,7 @@ input, select, button, textarea {
   font: inherit; background: #10131a; color: var(--ink); border: 1px solid var(--line); padding: 0.35rem 0.55rem;
 }
 textarea { width: 100%; min-height: 8rem; font-family: ui-monospace, monospace; font-size: 0.82rem; }
-button.primary, button:not(.secondary):not(.navbtn) { background: var(--accent); color: #12141a; border: 0; font-weight: 600; cursor: pointer; }
+button.primary, button:not(.secondary):not(.navbtn):not(.ovitem):not(.subitem) { background: var(--accent); color: #12141a; border: 0; font-weight: 600; cursor: pointer; }
 button.secondary { background: transparent; color: var(--ink); border: 1px solid var(--line); cursor: pointer; }
 .hidden { display: none !important; }
 .help { color: var(--muted); font-size: 0.85rem; margin: 0 0 0.75rem; }
@@ -51,14 +51,14 @@ section.panel h2 { margin: 0 0 0.6rem; font-size: 1rem; }
 .rcol { border-right: 1px solid var(--line); overflow: auto; min-height: 0; background: var(--panel); }
 .rcol:last-child { border-right: 0; }
 .rcol h3 { margin: 0; padding: 0.6rem 0.75rem; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); border-bottom: 1px solid var(--line); }
-.subitem, .ovitem {
+button.subitem, button.ovitem {
   display: block; width: 100%; text-align: left; background: transparent; color: var(--ink); border: 0; border-bottom: 1px solid var(--line);
-  padding: 0.55rem 0.75rem; cursor: pointer; font: inherit;
+  padding: 0.55rem 0.75rem; cursor: pointer; font: inherit; font-weight: 400;
 }
-.subitem:hover, .ovitem:hover, .subitem.active, .ovitem.active { background: #252a38; }
-.subitem .u { color: var(--accent); font-size: 0.75rem; float: right; }
-.ovitem.unread { color: var(--unread); font-weight: 600; }
-.ovitem .depth { color: var(--muted); }
+button.subitem:hover, button.ovitem:hover, button.subitem.active, button.ovitem.active { background: #252a38; color: var(--ink); }
+button.subitem .u { color: var(--accent); font-size: 0.75rem; float: right; }
+button.ovitem.unread { color: var(--unread); font-weight: 600; }
+button.ovitem .depth { color: var(--muted); }
 #artview { padding: 0.75rem; display: flex; flex-direction: column; gap: 0.5rem; height: 100%; }
 #artmeta { color: var(--muted); font-size: 0.82rem; }
 #artbody { flex: 1; overflow: auto; white-space: pre-wrap; background: #10131a; border: 1px solid var(--line); padding: 0.75rem; margin: 0; font-family: ui-monospace, monospace; font-size: 0.82rem; }
@@ -776,8 +776,12 @@ function showCompose(reply) {
 $("composenew").onclick = () => showCompose(null);
 $("areply").onclick = () => { if (curArt) showCompose(curArt); };
 $("ccancel").onclick = () => { $("compose").classList.add("hidden"); replyTo = null; };
+let posting = false;
 $("csend").onclick = async () => {
-  $("cmsg").textContent = "";
+  if (posting) return;
+  posting = true;
+  $("csend").disabled = true;
+  $("cmsg").textContent = "sending…";
   try {
     const body = {
       from: $("cfrom").value,
@@ -798,6 +802,10 @@ $("csend").onclick = async () => {
     const n = nums[g];
     if (n) await openArticle(n);
   } catch (e) { $("cmsg").textContent = e.message; }
+  finally {
+    posting = false;
+    $("csend").disabled = false;
+  }
 };
 
 // Ops / Stats
