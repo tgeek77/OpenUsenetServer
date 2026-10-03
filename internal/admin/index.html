@@ -126,12 +126,25 @@ button.subitem, button.ovitem {
 }
 button.subitem:hover, button.ovitem:hover, button.subitem.active, button.ovitem.active { background: var(--hover); color: var(--ink); }
 button.subitem .u { color: var(--accent); font-size: 0.75rem; float: right; }
+.subrow { display: flex; align-items: stretch; border-bottom: 1px solid var(--line); }
+.subrow .subitem { flex: 1; min-width: 0; border-bottom: 0; }
+.subrow .unsub {
+  flex: 0 0 auto; background: transparent; color: var(--muted); border: 0; border-left: 1px solid var(--line);
+  padding: 0.55rem 0.65rem; cursor: pointer; font: inherit; line-height: 1;
+}
+.subrow .unsub:hover { color: var(--bad); background: var(--hover); }
+.subrow:has(.subitem.active) { background: var(--hover); }
 button.ovitem.unread { color: var(--unread); font-weight: 600; }
 button.ovitem .depth { color: var(--muted); }
 #artview { padding: 0.75rem; display: flex; flex-direction: column; gap: 0.5rem; height: 100%; }
 #artmeta { color: var(--muted); font-size: 0.82rem; }
 #artbody { flex: 1; overflow: auto; white-space: pre-wrap; background: var(--field); border: 1px solid var(--line); padding: 0.75rem; margin: 0; font-family: ui-monospace, monospace; font-size: 0.82rem; }
 #compose { border-top: 1px solid var(--line); padding: 0.75rem; background: var(--compose); }
+#cbody {
+  width: 80ch; max-width: 100%; min-height: 12rem; resize: vertical;
+  font-family: ui-monospace, "IBM Plex Mono", monospace; font-size: 0.82rem;
+  line-height: 1.35; white-space: pre-wrap; overflow-wrap: break-word;
+}
 .toolbar { padding: 0.45rem 0.75rem; border-bottom: 1px solid var(--line); display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; }
 .modal { position: fixed; inset: 0; background: rgba(0,0,0,0.55); display: flex; align-items: flex-start; justify-content: center; padding: 2rem 1rem; overflow: auto; z-index: 20; }
 .modalbox { width: min(920px, 100%); background: var(--panel); border: 1px solid var(--line); padding: 1rem 1.1rem 1.25rem; }
@@ -224,7 +237,7 @@ button.ovitem .depth { color: var(--muted); }
       <div class="row">
         <input id="csubj" placeholder="Subject" style="flex:1; min-width:12rem">
       </div>
-      <textarea id="cbody" placeholder="Article body"></textarea>
+      <textarea id="cbody" cols="80" wrap="soft" spellcheck="true" placeholder="Article body (80 columns)"></textarea>
       <div class="row">
         <button id="csend">Send</button>
         <button class="secondary" id="ccancel">Cancel</button>
@@ -757,14 +770,39 @@ $("setpass").onclick = async () => {
   } catch (e) { $("setpassmsg").textContent = e.message; }
 };
 
+async function clearReader() {
+  curGroup = null;
+  curArt = null;
+  curNum = 0;
+  overview = [];
+  replyTo = null;
+  $("ovtitle").textContent = "Articles";
+  $("overview").innerHTML = "";
+  $("artmeta").textContent = "Select an article";
+  $("artbody").textContent = "";
+  $("compose").classList.add("hidden");
+}
+
 async function loadSubs() {
   const d = await j("/api/reader/subscriptions");
   $("subs").innerHTML = (d.subscriptions||[]).map(s =>
-    `<button class="subitem ${curGroup===s.group?"active":""}" data-g="${esc(s.group)}">
-      <span class="u">${s.unread?s.unread:""}</span>${esc(s.group)}
-     </button>`
+    `<div class="subrow">
+      <button type="button" class="subitem ${curGroup===s.group?"active":""}" data-g="${esc(s.group)}">
+        <span class="u">${s.unread?s.unread:""}</span>${esc(s.group)}
+      </button>
+      <button type="button" class="unsub" data-ug="${esc(s.group)}" title="Unsubscribe" aria-label="Unsubscribe from ${esc(s.group)}">×</button>
+    </div>`
   ).join("") || `<div class="help" style="padding:0.75rem">No subscriptions yet. Find a group above.</div>`;
   $("subs").onclick = async (e) => {
+    const ub = e.target.closest("button.unsub[data-ug]");
+    if (ub) {
+      const group = ub.dataset.ug;
+      if (!confirm("Unsubscribe from " + group + "?")) return;
+      await j("/api/reader/subscriptions?group="+encodeURIComponent(group), {method:"DELETE"});
+      if (curGroup === group) await clearReader();
+      await loadSubs();
+      return;
+    }
     const b = e.target.closest("button[data-g]");
     if (!b) return;
     await openGroup(b.dataset.g);
