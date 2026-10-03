@@ -173,10 +173,13 @@ func TestPortalStatsChrome(t *testing.T) {
 		t.Fatal("stats page should be available to every signed-in user")
 	}
 	stats := indexHTML[statsAt:adminAt]
-	for _, want := range []string{"Hall of shame", "Group search", "Recent articles", "Newsgroup", "Sender", `id="gsearch"`, `id="arts"`, `id="shame"`} {
+	for _, want := range []string{"Hall of shame", "Group search", "Recent articles", "Newsgroup", "Sender", `id="gsearch"`, `id="arts"`, `id="shame"`, "rows10"} {
 		if !bytes.Contains(stats, []byte(want)) {
 			t.Fatalf("stats missing %s", want)
 		}
+	}
+	if bytes.Index(stats, []byte("Hall of shame")) < bytes.Index(stats, []byte("Recent articles")) {
+		t.Fatal("hall of shame should be at the bottom of stats")
 	}
 	adminHTML := indexHTML[adminAt:]
 	if bytes.Contains(adminHTML, []byte("Recent articles")) || bytes.Contains(adminHTML, []byte(`id="groups"`)) {

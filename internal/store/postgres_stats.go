@@ -320,19 +320,125 @@ func sliceTops(all []NameCount) map[string][]NameCount {
 	return m
 }
 
+func (p *Postgres) RefreshContentStats(ctx context.Context, excludeSites []string) error {
+	now := time.Now().UTC()
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+	tomorrow := today.Add(24 * time.Hour)
+
+	tx, err := p.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	for _, q := range []string{
+		`DELETE FROM stats_group_day`,
+		`DELETE FROM stats_group_total`,
+		`DELETE FROM stats_from_day`,
+		`DELETE FROM stats_path_day`,
+	} {
+		if _, err := tx.Exec(ctx, q); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO stats_group_total (group_id, text_n, binary_n)
+		SELECT o.group_id,
+			COUNT(*) FILTER (WHERE NOT a.is_binary)::int,
+			COUNT(*) FILTER (WHERE a.is_binary)::int
+		FROM overview o
+		JOIN articles a ON a.id = o.article_id
+		GROUP BY o.group_id`); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO stats_group_day (day, group_id, text_n, binary_n)
+		SELECT $1::date, o.group_id,
+			COUNT(*) FILTER (WHERE NOT a.is_binary)::int,
+			COUNT(*) FILTER (WHERE a.is_binary)::int
+		FROM overview o
+		JOIN articles a ON a.id = o.article_id
+		WHERE a.stored_at >= $1 AND a.stored_at < $2
+		GROUP BY o.group_id`, today, tomorrow); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO stats_from_day (day, from_key, n)
+		SELECT (stored_at AT TIME ZONE 'UTC')::date, lower(btrim(from_hdr)), COUNT(*)::int
+		FROM articles
+		WHERE btrim(from_hdr) <> ''
+		GROUP BY 1, 2`); err != nil {
+		return err
+	}
+
+	rows, err := tx.Query(ctx, `
+		SELECT (stored_at AT TIME ZONE 'UTC')::date, headers FROM articles`)
+	if err != nil {
+		return err
+	}
+	paths := map[string]map[string]int{}
+	for rows.Next() {
+		var day time.Time
+		var headers string
+		if err := rows.Scan(&day, &headers); err != nil {
+			rows.Close()
+			return err
+		}
+		key := day.UTC().Format("2006-01-02")
+		if paths[key] == nil {
+			paths[key] = map[string]int{}
+		}
+		for _, site := range PathStatSites(pathFromHeaders(headers), excludeSites...) {
+			paths[key][site]++
+		}
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for dayKey, sites := range paths {
+		day, err := time.Parse("2006-01-02", dayKey)
+		if err != nil {
+			return err
+		}
+		for site, n := range sites {
+			if _, err := tx.Exec(ctx, `
+				INSERT INTO stats_path_day (day, site, n) VALUES ($1,$2,$3)`,
+				day, site, n); err != nil {
+				return err
+			}
+		}
+	}
+	return tx.Commit(ctx)
+}
+
+func pathFromHeaders(headers string) string {
+	for _, line := range strings.Split(headers, "\n") {
+		line = strings.TrimRight(line, "\r")
+		if len(line) >= 5 && strings.EqualFold(line[:5], "Path:") {
+			return strings.TrimSpace(line[5:])
+		}
+	}
+	return ""
+}
+
 func (p *Postgres) topGroupsDay(ctx context.Context, day time.Time, limit int) ([]NameCount, error) {
 	rows, err := p.pool.Query(ctx, `
 		SELECT g.name, s.text_n
 		FROM stats_group_day s
 		JOIN newsgroups g ON g.id = s.group_id
-		WHERE s.day = $1 AND s.text_n > 0
-		ORDER BY s.text_n DESC, g.name
-		LIMIT $2`, day, limit)
+		WHERE s.day = $1 AND s.text_n > 0 AND g.count > 0
+		  AND COALESCE(g.retention_mode, '') <> $2
+		ORDER BY s.text_n DESC, g.name`, day, RetentionModeBlocked)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	return scanNameCounts(rows)
+	all, err := scanNameCounts(rows)
+	if err != nil {
+		return nil, err
+	}
+	return p.withoutIgnored(ctx, all, limit)
 }
 
 func (p *Postgres) topGroupsTotal(ctx context.Context, limit int) ([]NameCount, error) {
@@ -340,14 +446,37 @@ func (p *Postgres) topGroupsTotal(ctx context.Context, limit int) ([]NameCount, 
 		SELECT g.name, s.text_n
 		FROM stats_group_total s
 		JOIN newsgroups g ON g.id = s.group_id
-		WHERE s.text_n > 0
-		ORDER BY s.text_n DESC, g.name
-		LIMIT $1`, limit)
+		WHERE s.text_n > 0 AND g.count > 0
+		  AND COALESCE(g.retention_mode, '') <> $1
+		ORDER BY s.text_n DESC, g.name`, RetentionModeBlocked)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	return scanNameCounts(rows)
+	all, err := scanNameCounts(rows)
+	if err != nil {
+		return nil, err
+	}
+	return p.withoutIgnored(ctx, all, limit)
+}
+
+// withoutIgnored drops ignore-pattern matches and keeps the current-count order.
+func (p *Postgres) withoutIgnored(ctx context.Context, all []NameCount, limit int) ([]NameCount, error) {
+	bans, err := p.ListGroupBans(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]NameCount, 0, len(all))
+	for _, row := range all {
+		if row.Count <= 0 || groupMatches(bans, row.Name) {
+			continue
+		}
+		out = append(out, row)
+		if len(out) >= limit {
+			break
+		}
+	}
+	return out, nil
 }
 
 func (p *Postgres) topFromDay(ctx context.Context, day time.Time, limit int) ([]FromCount, error) {

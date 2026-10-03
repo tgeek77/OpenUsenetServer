@@ -111,6 +111,7 @@ section.panel { background: var(--panel); border: 1px solid var(--line); padding
 section.panel h2 { margin: 0 0 0.6rem; font-size: 1rem; }
 #admin, #ops, #stats, #settings { padding: 1rem 1.25rem 2rem; overflow: auto; flex: 1; }
 .scrollbox { max-height: calc(2.4rem * 25); overflow: auto; }
+.scrollbox.rows10 { max-height: calc(2.4rem * 10); }
 .scrollbox thead th { position: sticky; top: 0; background: var(--panel); z-index: 1; }
 #reader { flex: 1; min-height: 0; display: grid; grid-template-columns: 220px 1fr 1.2fr; gap: 0; }
 @media (max-width: 960px) {
@@ -310,18 +311,8 @@ button.ovitem .depth { color: var(--muted); }
 <main id="stats" class="hidden">
   <div class="cards" id="statcards"></div>
   <section class="panel">
-    <h2>Hall of shame</h2>
-    <p class="help">Binary groups this server ignores or has blocked. Articles in them are deleted and not kept, including crossposts.</p>
-    <div class="scrollbox">
-      <table>
-        <thead><tr><th>Kind</th><th>Group</th><th>Detail</th></tr></thead>
-        <tbody id="shame"></tbody>
-      </table>
-    </div>
-  </section>
-  <section class="panel">
     <h2>Top non-binary groups</h2>
-    <p class="help">Popularity from accept-time rollups (text posts only). Crossposts count once per group.</p>
+    <p class="help">Recounted from articles still stored, at the top of each hour (UTC). A group whose count is 0 drops off, including after it is ignored or blocked.</p>
     <div class="row">
       <button class="secondary togglebtn active" data-period="today" id="stoday">Today (UTC)</button>
       <button class="secondary togglebtn" data-period="total" id="stotal">All-time</button>
@@ -346,6 +337,7 @@ button.ovitem .depth { color: var(--muted); }
   <div class="statgrid">
     <section class="panel">
       <h2>Top 10 posters (today)</h2>
+      <p class="help">Same hourly recount. Someone who only posted in an ignored or blocked group drops off after that recount.</p>
       <div class="scrollbox"><table><thead><tr><th>From</th><th>N</th></tr></thead><tbody id="statpostersday"></tbody></table></div>
     </section>
     <section class="panel">
@@ -356,7 +348,7 @@ button.ovitem .depth { color: var(--muted); }
   <div class="statgrid">
     <section class="panel">
       <h2>Top 10 Path providers (today)</h2>
-      <p class="help">Bang-path hops excluding this server and not-for-mail.</p>
+      <p class="help">Bang-path hops on articles still stored, excluding this server and not-for-mail. Recounted hourly.</p>
       <div class="scrollbox"><table><thead><tr><th>Site</th><th>N</th></tr></thead><tbody id="statprovday"></tbody></table></div>
     </section>
     <section class="panel">
@@ -390,6 +382,16 @@ button.ovitem .depth { color: var(--muted); }
       </table>
     </div>
     <pre id="art" class="mono" hidden></pre>
+  </section>
+  <section class="panel">
+    <h2>Hall of shame</h2>
+    <p class="help">Binary groups this server ignores or has blocked. Articles in them are deleted and not kept, including crossposts.</p>
+    <div class="scrollbox rows10">
+      <table>
+        <thead><tr><th>Kind</th><th>Group</th><th>Detail</th></tr></thead>
+        <tbody id="shame"></tbody>
+      </table>
+    </div>
   </section>
 </main>
 <main id="admin" class="hidden">

@@ -1242,12 +1242,14 @@ func (m *Memory) ContentStats(_ context.Context) (ContentStats, error) {
 			out.PopulatedGroups++
 		}
 	}
-	today := time.Now().UTC().Format("2006-01-02")
-	out.TopGroupsToday = sliceTops(rankGroupsMem(m.statGroupDay[today], true))
-	out.TopGroupsTotal = sliceTops(rankGroupsTotalMem(m.statGroupTotal))
-	out.TopPostersToday = rankFromMem(m.statFromDay[today], 10)
+	today := time.Now().UTC()
+	today = time.Date(today.Year(), today.Month(), today.Day(), 0, 0, 0, 0, time.UTC)
+	dkey := today.Format("2006-01-02")
+	out.TopGroupsToday = sliceTops(m.rankSnapshotGroupsLocked(dkey))
+	out.TopGroupsTotal = sliceTops(m.rankSnapshotGroupsLocked(""))
+	out.TopPostersToday = rankFromMem(m.statFromDay[dkey], 10)
 	out.TopPostersTotal = rankFromAllMem(m.statFromDay, 10)
-	out.TopProvidersToday = rankPathMem(m.statPathDay[today], 10)
+	out.TopProvidersToday = rankPathMem(m.statPathDay[dkey], 10)
 	out.TopProvidersTotal = rankPathAllMem(m.statPathDay, 10)
 	out.HallOfShame = m.hallOfShameLocked()
 	return out, nil
@@ -1281,35 +1283,68 @@ func (m *Memory) hallOfShameLocked() []ShameEntry {
 	return out
 }
 
-func rankGroupsMem(m map[string]statGB, textOnly bool) []NameCount {
-	var out []NameCount
-	for name, c := range m {
-		n := c.textN
-		if !textOnly {
-			n += c.binN
-		}
-		if n > 0 {
-			out = append(out, NameCount{Name: name, Count: n})
-		}
+func (m *Memory) groupRankEligibleLocked(name string, g *memGroup) bool {
+	if g == nil || g.Count <= 0 || g.RetentionMode == RetentionModeBlocked {
+		return false
 	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].Count != out[j].Count {
-			return out[i].Count > out[j].Count
-		}
-		return out[i].Name < out[j].Name
-	})
-	if len(out) > 100 {
-		out = out[:100]
-	}
-	return out
+	return !groupMatches(m.bans, name)
 }
 
-func rankGroupsTotalMem(m map[string]statGB) []NameCount {
-	var out []NameCount
-	for name, c := range m {
-		if c.textN > 0 {
-			out = append(out, NameCount{Name: name, Count: c.textN})
+func (m *Memory) RefreshContentStats(_ context.Context, excludeSites []string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.statGroupDay = map[string]map[string]statGB{}
+	m.statGroupTotal = map[string]statGB{}
+	m.statFromDay = map[string]map[string]int64{}
+	m.statPathDay = map[string]map[string]int64{}
+	for _, art := range m.arts {
+		dkey := art.StoredAt.UTC().Format("2006-01-02")
+		textInc, binInc := int64(1), int64(0)
+		if art.isBinary {
+			textInc, binInc = 0, 1
 		}
+		if m.statGroupDay[dkey] == nil {
+			m.statGroupDay[dkey] = map[string]statGB{}
+		}
+		for name := range art.groups {
+			cur := m.statGroupDay[dkey][name]
+			cur.textN += textInc
+			cur.binN += binInc
+			m.statGroupDay[dkey][name] = cur
+			tot := m.statGroupTotal[name]
+			tot.textN += textInc
+			tot.binN += binInc
+			m.statGroupTotal[name] = tot
+		}
+		if fk := NormalizeFromKey(art.From); fk != "" {
+			if m.statFromDay[dkey] == nil {
+				m.statFromDay[dkey] = map[string]int64{}
+			}
+			m.statFromDay[dkey][fk]++
+		}
+		if m.statPathDay[dkey] == nil {
+			m.statPathDay[dkey] = map[string]int64{}
+		}
+		for _, site := range PathStatSites(pathFromHeaders(art.Headers), excludeSites...) {
+			m.statPathDay[dkey][site]++
+		}
+	}
+	return nil
+}
+
+func (m *Memory) rankSnapshotGroupsLocked(dayKey string) []NameCount {
+	var src map[string]statGB
+	if dayKey == "" {
+		src = m.statGroupTotal
+	} else {
+		src = m.statGroupDay[dayKey]
+	}
+	var out []NameCount
+	for name, c := range src {
+		if c.textN <= 0 || !m.groupRankEligibleLocked(name, m.groups[name]) {
+			continue
+		}
+		out = append(out, NameCount{Name: name, Count: c.textN})
 	}
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].Count != out[j].Count {

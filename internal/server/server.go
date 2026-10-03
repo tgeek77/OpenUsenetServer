@@ -320,10 +320,7 @@ func (s *Server) purgeUnwanted(ctx context.Context) error {
 }
 
 func (s *Server) runExpireSchedule(ctx context.Context) {
-	every := time.Hour
-	s.log.Printf("retention expire schedule every %s (history_days=%d)", every, s.cfg.Retention.HistoryDays)
-	t := time.NewTicker(every)
-	defer t.Stop()
+	s.log.Printf("retention expire and stats recount on the hour UTC (history_days=%d)", s.cfg.Retention.HistoryDays)
 	run := func() {
 		if err := s.purgeUnwanted(ctx); err != nil {
 			s.log.Printf("purge unwanted: %v", err)
@@ -331,20 +328,30 @@ func (s *Server) runExpireSchedule(ctx context.Context) {
 		res, err := s.st.Expire(ctx, s.cfg.Retention.HistoryDays)
 		if err != nil {
 			s.log.Printf("expire: %v", err)
+		} else {
+			s.ops.NoteExpire(res)
+			if res.OverviewRemoved > 0 || res.ArticlesRemoved > 0 || res.HistoryRemoved > 0 {
+				s.log.Printf("expire: overview=%d articles=%d history=%d",
+					res.OverviewRemoved, res.ArticlesRemoved, res.HistoryRemoved)
+			}
+		}
+		start := time.Now()
+		if err := s.st.RefreshContentStats(ctx, []string{s.cfg.Server.Pathhost, s.cfg.Server.Hostname}); err != nil {
+			s.log.Printf("content stats: %v", err)
 			return
 		}
-		s.ops.NoteExpire(res)
-		if res.OverviewRemoved > 0 || res.ArticlesRemoved > 0 || res.HistoryRemoved > 0 {
-			s.log.Printf("expire: overview=%d articles=%d history=%d",
-				res.OverviewRemoved, res.ArticlesRemoved, res.HistoryRemoved)
-		}
+		s.log.Printf("content stats recounted in %s", time.Since(start).Round(time.Millisecond))
 	}
 	run()
 	for {
+		now := time.Now().UTC()
+		next := now.Truncate(time.Hour).Add(time.Hour)
+		timer := time.NewTimer(time.Until(next))
 		select {
 		case <-ctx.Done():
+			timer.Stop()
 			return
-		case <-t.C:
+		case <-timer.C:
 			run()
 		}
 	}
