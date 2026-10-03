@@ -14,6 +14,7 @@ import (
 	"openusenet/internal/config"
 	"openusenet/internal/retention"
 	"openusenet/internal/store"
+	"openusenet/internal/wildmat"
 )
 
 // Feeder is the outbound IHAVE interface used after accept.
@@ -79,6 +80,19 @@ func Accept(ctx context.Context, cfg config.Config, st store.Store, mbox *archiv
 		Organization: cfg.Server.Organization,
 	}); err != nil {
 		return nil, err
+	}
+	patterns, err := st.ListGroupBans(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if len(patterns) > 0 {
+		kept := wildmat.KeepGroups(patterns, art.Newsgroups())
+		if len(kept) == 0 {
+			return nil, fmt.Errorf("newsgroups are not accepted")
+		}
+		if len(kept) != len(art.Newsgroups()) {
+			art.Set("Newsgroups", strings.Join(kept, ","))
+		}
 	}
 	if article.TooOld(art.Get("Date"), cfg.Limits.ArtCutoffDays, time.Time{}) {
 		if cfg.Limits.RememberRejects {

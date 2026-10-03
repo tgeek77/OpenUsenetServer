@@ -43,12 +43,15 @@ func EffectiveRules(cfg config.Config, peerHosts []string) []string {
 	return rules
 }
 
-// Open reports whether IHAVE is accepted from any remote (no rules configured).
-func Open(cfg config.Config, peerHosts []string) bool {
-	if cfg.Inbound.Open != nil && !*cfg.Inbound.Open {
-		return false
+// Open reports whether IHAVE is accepted from any remote.
+// The default is open. Configured peers do not close inbound; they are extra
+// allow-list entries only when inbound is explicitly closed (open: false).
+// An explicit open: true accepts every remote even if an allow list is set.
+func Open(cfg config.Config, _ []string) bool {
+	if cfg.Inbound.Open != nil {
+		return *cfg.Inbound.Open
 	}
-	return len(cfg.Inbound.Allow) == 0 && len(peerHosts) == 0
+	return len(cfg.Inbound.Allow) == 0
 }
 
 // Allowed reports whether remoteAddr (host:port or IP) may IHAVE.

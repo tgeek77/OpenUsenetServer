@@ -253,17 +253,17 @@ func (p *Portal) readerArticle(w http.ResponseWriter, r *http.Request, u store.U
 	}
 	_ = p.st.SetReadState(r.Context(), u.ID, name, num)
 	writeJSON(w, http.StatusOK, map[string]any{
-		"group":       name,
-		"num":         a.Num,
-		"message_id":  a.MessageID,
-		"subject":     a.Subject,
-		"from":        a.From,
-		"date":        a.Date,
-		"references":  a.Refs,
-		"headers":     a.Headers,
-		"body":        a.Body,
-		"next":        nextNum,
-		"prev":        prevNum,
+		"group":      name,
+		"num":        a.Num,
+		"message_id": a.MessageID,
+		"subject":    a.Subject,
+		"from":       a.From,
+		"date":       a.Date,
+		"references": a.Refs,
+		"headers":    a.Headers,
+		"body":       a.Body,
+		"next":       nextNum,
+		"prev":       prevNum,
 	})
 }
 
@@ -316,7 +316,7 @@ func (p *Portal) readerPost(w http.ResponseWriter, r *http.Request, u store.User
 		return
 	}
 	if strings.TrimSpace(in.From) == "" {
-		in.From = u.Username + "@" + p.cfg.Server.Hostname
+		in.From = readerFrom(u, p.cfg.Server.Hostname)
 	}
 	res, err := posting.Accept(r.Context(), p.cfg, p.st, p.mbox, p.feeder, p.log, in, u.ID)
 	if err != nil {
@@ -340,4 +340,19 @@ func (p *Portal) readerPost(w http.ResponseWriter, r *http.Request, u store.User
 		"xref":       res.Xref,
 		"numbers":    res.Numbers,
 	})
+}
+
+func readerFrom(u store.User, hostname string) string {
+	name := strings.TrimSpace(u.DisplayName)
+	email := strings.TrimSpace(u.Email)
+	if name != "" && email != "" {
+		return name + " <" + email + ">"
+	}
+	if email != "" {
+		return email
+	}
+	if hostname == "" {
+		hostname = "news"
+	}
+	return u.Username + "@" + hostname
 }

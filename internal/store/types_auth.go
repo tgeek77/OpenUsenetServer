@@ -19,28 +19,32 @@ const (
 )
 
 type User struct {
-	ID           int64     `json:"id"`
-	Username     string    `json:"username"`
-	PasswordHash string    `json:"-"`
-	Role         string    `json:"role"`
-	CanPost      bool      `json:"can_post"`
-	Disabled     bool      `json:"disabled"`
-	CreatedAt    time.Time `json:"created_at"`
+	ID                 int64     `json:"id"`
+	Username           string    `json:"username"`
+	PasswordHash       string    `json:"-"`
+	Role               string    `json:"role"`
+	CanPost            bool      `json:"can_post"`
+	Disabled           bool      `json:"disabled"`
+	DisplayName        string    `json:"display_name"`
+	Email              string    `json:"email"`
+	MustChangePassword bool      `json:"must_change_password"`
+	SessionGen         int       `json:"-"`
+	CreatedAt          time.Time `json:"created_at"`
 }
 
 func (u User) IsAdmin() bool { return u.Role == RoleAdmin }
 func (u User) MayPost() bool { return !u.Disabled && (u.CanPost || u.IsAdmin()) }
 
 type Peer struct {
-	ID             int64     `json:"id"`
-	Name           string    `json:"name"`
-	PathToken      string    `json:"path_token"`
-	IncomingHost   string    `json:"incoming_host"`
-	Host           string    `json:"host"`
-	Port           int       `json:"port"`
-	Patterns       string    `json:"patterns"`
-	Distributions  string    `json:"distributions"`
-	Flags          string    `json:"flags"`
+	ID               int64     `json:"id"`
+	Name             string    `json:"name"`
+	PathToken        string    `json:"path_token"`
+	IncomingHost     string    `json:"incoming_host"`
+	Host             string    `json:"host"`
+	Port             int       `json:"port"`
+	Patterns         string    `json:"patterns"`
+	Distributions    string    `json:"distributions"`
+	Flags            string    `json:"flags"`
 	Enabled          bool      `json:"enabled"`
 	IncomingPassword string    `json:"incoming_password,omitempty"`
 	OutgoingPassword string    `json:"outgoing_password,omitempty"`

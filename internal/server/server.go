@@ -372,6 +372,7 @@ func BootstrapAdmin(ctx context.Context, st store.Store, lg *log.Logger) error {
 	}
 	if _, err := st.CreateUser(ctx, store.User{
 		Username: user, PasswordHash: hash, Role: store.RoleAdmin, CanPost: true,
+		MustChangePassword: true,
 	}); err != nil {
 		return err
 	}

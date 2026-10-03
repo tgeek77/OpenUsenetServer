@@ -253,6 +253,7 @@ func cmdUser(args []string) error {
 	}
 	u, err := st.CreateUser(ctx, store.User{
 		Username: *username, PasswordHash: hash, Role: role, CanPost: true,
+		MustChangePassword: true,
 	})
 	if err != nil {
 		return err

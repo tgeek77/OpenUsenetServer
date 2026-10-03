@@ -903,6 +903,15 @@ func cmdPost(s *Session, _ []string) error {
 		return err
 	}
 	ctx := context.Background()
+	banned, err := s.applyGroupBans(ctx, art)
+	if err != nil {
+		return err
+	}
+	if banned {
+		_ = s.store.RememberMessageID(ctx, msgid)
+		return s.conn.Reply(FailPostReject, "newsgroups not accepted")
+	}
+	wire = art.Wire()
 	if skip, err := s.handleControl(ctx, art); skip {
 		if err != nil {
 			return err
@@ -1117,6 +1126,15 @@ func (s *Session) acceptPeerArticle(ctx context.Context, msgid string, raw []byt
 			return s.replyTransfer(rejectCode, msgid, "newsgroups not wanted by peer subscription", withMsgID)
 		}
 	}
+	banned, err := s.applyGroupBans(ctx, art)
+	if err != nil {
+		return s.replyTransfer(deferCode, msgid, "try again later", withMsgID)
+	}
+	if banned {
+		_ = s.store.RememberMessageID(ctx, msgid)
+		return s.replyTransfer(rejectCode, msgid, "article not wanted", withMsgID)
+	}
+	wire = art.Wire()
 	if skip, err := s.handleControl(ctx, art); skip {
 		if err != nil {
 			s.log.Printf("peer transfer cancel %s: %v", msgid, err)
@@ -1152,6 +1170,25 @@ func (s *Session) acceptPeerArticle(ctx context.Context, msgid string, raw []byt
 	}
 	s.offer(art, wire)
 	return nil
+}
+
+// applyGroupBans drops newsgroups that match a ban pattern.
+// It reports banned=true when every group was dropped.
+func (s *Session) applyGroupBans(ctx context.Context, art *article.Article) (bool, error) {
+	patterns, err := s.store.ListGroupBans(ctx)
+	if err != nil || len(patterns) == 0 {
+		return false, err
+	}
+	groups := art.Newsgroups()
+	kept := wildmat.KeepGroups(patterns, groups)
+	if len(kept) == len(groups) {
+		return false, nil
+	}
+	if len(kept) == 0 {
+		return true, nil
+	}
+	art.Set("Newsgroups", strings.Join(kept, ","))
+	return false, nil
 }
 
 func (s *Session) storeArticle(ctx context.Context, art *article.Article, wire []byte, isBinary bool) (*store.PostResult, error) {

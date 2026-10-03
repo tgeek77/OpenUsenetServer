@@ -30,6 +30,31 @@ func Match(wildmat, s string) bool {
 	return found && matched
 }
 
+// KeepGroups returns groups that match none of the ban patterns.
+// An empty pattern list keeps every group.
+func KeepGroups(patterns, groups []string) []string {
+	if len(patterns) == 0 {
+		return groups
+	}
+	out := make([]string, 0, len(groups))
+	for _, g := range groups {
+		if !groupBanned(patterns, g) {
+			out = append(out, g)
+		}
+	}
+	return out
+}
+
+func groupBanned(patterns []string, group string) bool {
+	for _, p := range patterns {
+		p = strings.TrimSpace(p)
+		if p != "" && Match(p, group) {
+			return true
+		}
+	}
+	return false
+}
+
 // MatchAny reports whether any of the strings match the wildmat.
 func MatchAny(wildmat string, ss []string) bool {
 	for _, s := range ss {

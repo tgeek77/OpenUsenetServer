@@ -74,8 +74,8 @@ groups_source:
 #     port: 119
 
 # Who may IHAVE to us.
-# - Default (no inbound block): open to all remotes (dev).
-# - Peers in the admin UI: enabled peer hostnames are always allowed.
+# - Default: accept IHAVE from any remote. Configured peers do not close inbound.
+# - Peers in the admin UI are also allowed when inbound is closed.
 # - Optional AUTHINFO: set a peer incoming password only when you want that peer to authenticate.
 # - require_peer_auth: true — refuse IHAVE unless the remote matches a configured peer.
 # - open: false — refuse everyone not listed in allow or configured as a peer.

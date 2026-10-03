@@ -345,6 +345,67 @@ func TestCheckAndTakeThis(t *testing.T) {
 	}
 }
 
+func TestIHaveBannedGroup(t *testing.T) {
+	c, st := startTestServer(t)
+	if err := st.AddGroupBan(context.Background(), "local.*"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.EnsureGroup(context.Background(), "alt.test", "Alt", "y"); err != nil {
+		t.Fatal(err)
+	}
+	r := bufio.NewReader(c)
+	_ = readLine(t, r)
+
+	msgid := "<banned-1@news.test>"
+	_, _ = c.Write([]byte("IHAVE " + msgid + "\r\n"))
+	if l := readLine(t, r); !strings.HasPrefix(l, "335 ") {
+		t.Fatalf("ihave cont %q", l)
+	}
+	art := "Path: other!not-for-mail\r\n" +
+		"From: a@b.c\r\n" +
+		"Newsgroups: local.test\r\n" +
+		"Subject: banned\r\n" +
+		"Date: Mon, 01 Jan 2024 00:00:00 +0000\r\n" +
+		"Message-ID: " + msgid + "\r\n" +
+		"\r\n" +
+		"nope\r\n" +
+		".\r\n"
+	_, _ = c.Write([]byte(art))
+	if l := readLine(t, r); !strings.HasPrefix(l, "437 ") {
+		t.Fatalf("want not wanted, got %q", l)
+	}
+	n, err := st.CountArticles(context.Background())
+	if err != nil || n != 0 {
+		t.Fatalf("stored %d %v", n, err)
+	}
+
+	msgid2 := "<kept-1@news.test>"
+	_, _ = c.Write([]byte("IHAVE " + msgid2 + "\r\n"))
+	if l := readLine(t, r); !strings.HasPrefix(l, "335 ") {
+		t.Fatalf("ihave cont %q", l)
+	}
+	art2 := "Path: other!not-for-mail\r\n" +
+		"From: a@b.c\r\n" +
+		"Newsgroups: local.test,alt.test\r\n" +
+		"Subject: kept\r\n" +
+		"Date: Mon, 01 Jan 2024 00:00:00 +0000\r\n" +
+		"Message-ID: " + msgid2 + "\r\n" +
+		"\r\n" +
+		"yes\r\n" +
+		".\r\n"
+	_, _ = c.Write([]byte(art2))
+	if l := readLine(t, r); !strings.HasPrefix(l, "235 ") {
+		t.Fatalf("ihave ok %q", l)
+	}
+	got, err := st.GetByMsgID(context.Background(), msgid2)
+	if err != nil || got == nil || !strings.Contains(got.Headers, "Newsgroups: alt.test") {
+		t.Fatalf("headers %v %v", got, err)
+	}
+	if strings.Contains(got.Headers, "local.test") {
+		t.Fatalf("banned group still filed: %s", got.Headers)
+	}
+}
+
 func startRestrictedServer(t *testing.T) net.Conn {
 	t.Helper()
 	a, b := net.Pipe()

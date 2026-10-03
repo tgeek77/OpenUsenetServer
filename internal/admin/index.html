@@ -7,8 +7,8 @@
 <style>
 :root {
   --bg: #12141a; --panel: #1b1f2a; --ink: #e8eadf; --muted: #9aa3b5;
-  --line: #2a3140; --accent: #c4f542; --warn: #ffb020; --bad: #ff6b6b; --ok: #6ee7a8;
-  --unread: #f0f4c3;
+  --line: #2a3140; --accent: #9bbfb3; --warn: #ffb020; --bad: #ff6b6b; --ok: #6ee7a8;
+  --unread: #d5dde6;
 }
 * { box-sizing: border-box; }
 body { margin: 0; font: 15px/1.45 "IBM Plex Sans", "Segoe UI", sans-serif; background: var(--bg); color: var(--ink); height: 100vh; display: flex; flex-direction: column; }
@@ -112,6 +112,15 @@ section.panel h2 { margin: 0 0 0.6rem; font-size: 1rem; }
     <h3 id="ovtitle">Articles</h3>
     <div class="toolbar">
       <label><input type="checkbox" id="threaded" checked> threaded</label>
+      <label>Sort
+        <select id="ovsort" aria-label="Sort">
+          <option value="new" selected>Newest threads</option>
+          <option value="old">Oldest threads</option>
+          <option value="subject">Subject</option>
+          <option value="from">Author</option>
+        </select>
+      </label>
+      <button class="secondary" id="ovrefresh">Refresh</button>
       <button class="secondary" id="markall">Mark group read</button>
       <button id="composenew">New post</button>
     </div>
@@ -142,6 +151,25 @@ section.panel h2 { margin: 0 0 0.6rem; font-size: 1rem; }
     </div>
   </div>
 </div>
+<main id="settings" class="hidden">
+  <section class="panel" id="settingsprofile">
+    <h2>Reader identity</h2>
+    <p class="help">Used as the default From line when you post. You can still change it for a single article.</p>
+    <div class="row"><input id="setname" placeholder="Name" size="32"></div>
+    <div class="row"><input id="setemail" placeholder="email@example.com" size="32"></div>
+    <button id="setsave">Save</button>
+    <p class="mono" id="setmsg"></p>
+  </section>
+  <section class="panel">
+    <h2>Password</h2>
+    <p class="help" id="setpasshelp">Enter your current password and a new one.</p>
+    <div class="row"><input id="setcur" type="password" placeholder="Current password" size="32"></div>
+    <div class="row"><input id="setnew" type="password" placeholder="New password" size="32"></div>
+    <div class="row"><input id="setnew2" type="password" placeholder="Repeat new password" size="32"></div>
+    <button id="setpass">Change password</button>
+    <p class="mono" id="setpassmsg"></p>
+  </section>
+</main>
 <main id="ops" class="hidden">
   <div class="cards" id="opscards"></div>
   <section class="panel">
@@ -383,6 +411,19 @@ section.panel h2 { margin: 0 0 0.6rem; font-size: 1rem; }
     </table>
   </section>
   <section class="panel">
+    <h2>Ignored newsgroups</h2>
+    <p class="help">Articles in these groups are dropped on arrival. Wildmat patterns are allowed, for example <span class="mono">alt.binaries.*</span>. A crosspost is still filed in any group that is not ignored.</p>
+    <div class="row">
+      <input id="banpat" placeholder="alt.binaries.*" size="28">
+      <button id="banadd">Ignore</button>
+    </div>
+    <p class="mono" id="banmsg"></p>
+    <table>
+      <thead><tr><th>Pattern</th><th></th></tr></thead>
+      <tbody id="bans"></tbody>
+    </table>
+  </section>
+  <section class="panel">
     <h2>Groups</h2>
     <div class="row">
       <input id="agq" placeholder="search name…" size="24">
@@ -413,7 +454,7 @@ section.panel h2 { margin: 0 0 0.6rem; font-size: 1rem; }
 </main>
 <script>
 const $ = (id) => document.getElementById(id);
-let me = null, curGroup = null, curNum = 0, curArt = null, overview = [], replyTo = null;
+let me = null, curGroup = null, curNum = 0, curArt = null, overview = [], lastReadNum = 0, replyTo = null;
 
 async function j(url, opt) {
   const r = await fetch(url, Object.assign({credentials:"same-origin"}, opt||{}));
@@ -432,6 +473,7 @@ function showAuth(setup) {
   $("admin").classList.add("hidden");
   $("ops").classList.add("hidden");
   $("stats").classList.add("hidden");
+  $("settings").classList.add("hidden");
   $("nav").innerHTML = "";
   $("authbox").innerHTML = setup
     ? `<h2>Create first admin</h2><p class="help">This account can administer the server and use the newsreader.</p>
@@ -439,20 +481,31 @@ function showAuth(setup) {
        <p class="mono" id="lmsg"></p>`
     : `<h2>Sign in</h2>
        <div class="row"><input id="lu" placeholder="username"><input id="lp" type="password" placeholder="password"><button id="go">Sign in</button></div>
+       <label class="help"><input type="checkbox" id="remember" checked> Remember me on this browser</label>
        <p class="mono" id="lmsg"></p>`;
   $("go").onclick = async () => {
     try {
+      const body = {username:$("lu").value, password:$("lp").value};
+      if (!setup && $("remember")) body.remember = $("remember").checked;
       await j(setup ? "/api/setup" : "/api/login", {
         method:"POST", headers:{"Content-Type":"application/json"},
-        body: JSON.stringify({username:$("lu").value, password:$("lp").value})
+        body: JSON.stringify(body)
       });
       location.reload();
     } catch (e) { $("lmsg").textContent = e.message; }
   };
 }
 
+function defaultFrom(user, hostname) {
+  const email = (user.email || "").trim();
+  const name = (user.display_name || "").trim();
+  if (name && email) return name + " <" + email + ">";
+  if (email) return email;
+  return user.username + "@" + (hostname || "news");
+}
+
 function setMode(mode) {
-  ["reader","ops","stats","admin"].forEach(m => {
+  ["reader","ops","stats","admin","settings"].forEach(m => {
     const el = $(m);
     if (el) el.classList.toggle("hidden", m !== mode);
   });
@@ -460,6 +513,7 @@ function setMode(mode) {
   if (mode === "admin") loadAdmin();
   if (mode === "ops") loadOps();
   if (mode === "stats") loadStats();
+  if (mode === "settings") fillSettings();
 }
 
 async function boot() {
@@ -471,7 +525,18 @@ async function boot() {
   $("userbar").innerHTML = `<span class="mono">${esc(me.user.username)} (${esc(me.user.role)})</span>
     <button class="secondary" id="out">Sign out</button>`;
   $("out").onclick = async () => { await j("/api/logout",{method:"POST"}); location.reload(); };
+  if (me.user.must_change_password) {
+    $("sub").textContent = "Choose a new password to continue";
+    ["reader","ops","stats","admin"].forEach(m => { const el = $(m); if (el) el.classList.add("hidden"); });
+    $("settings").classList.remove("hidden");
+    $("settingsprofile").classList.add("hidden");
+    $("setpasshelp").textContent = "This account still has its initial password. Choose a new one before continuing.";
+    $("nav").innerHTML = "";
+    return;
+  }
+  $("settingsprofile").classList.remove("hidden");
   let nav = `<button class="navbtn active" data-mode="reader">Reader</button>`;
+  nav += `<button class="navbtn" data-mode="settings">Settings</button>`;
   nav += `<button class="navbtn" data-mode="stats">Stats</button>`;
   if (me.is_admin) {
     nav += `<button class="navbtn" data-mode="ops">Ops</button>`;
@@ -482,10 +547,43 @@ async function boot() {
     const b = e.target.closest(".navbtn");
     if (b) setMode(b.dataset.mode);
   };
-  $("cfrom").value = me.user.username + "@" + (me.hostname || "news");
+  $("cfrom").value = defaultFrom(me.user, me.hostname);
   setMode("reader");
   await loadSubs();
 }
+
+function fillSettings() {
+  if (!me || !me.user) return;
+  $("setname").value = me.user.display_name || "";
+  $("setemail").value = me.user.email || "";
+  $("setmsg").textContent = "";
+}
+
+$("setsave").onclick = async () => {
+  try {
+    const d = await j("/api/me", {
+      method:"PATCH", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({display_name:$("setname").value, email:$("setemail").value})
+    });
+    me.user = Object.assign(me.user, d.user);
+    $("cfrom").value = defaultFrom(me.user, me.hostname);
+    $("setmsg").textContent = "saved";
+  } catch (e) { $("setmsg").textContent = e.message; }
+};
+$("setpass").onclick = async () => {
+  $("setpassmsg").textContent = "";
+  if ($("setnew").value !== $("setnew2").value) {
+    $("setpassmsg").textContent = "new passwords do not match";
+    return;
+  }
+  try {
+    await j("/api/me/password", {
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({current_password:$("setcur").value, new_password:$("setnew").value})
+    });
+    location.reload();
+  } catch (e) { $("setpassmsg").textContent = e.message; }
+};
 
 async function loadSubs() {
   const d = await j("/api/reader/subscriptions");
@@ -549,8 +647,28 @@ function threadDepth(refs) {
   return Math.min(12, (refs.match(/</g) || []).length);
 }
 
-function orderedOverview(rows, threaded) {
-  if (!threaded) return rows.slice().sort((a,b)=>a.num-b.num);
+function threadStamp(root, children) {
+  let n = root.num;
+  const stack = [root];
+  while (stack.length) {
+    const cur = stack.pop();
+    if (cur.num > n) n = cur.num;
+    (children[cur.message_id] || []).forEach(c => stack.push(c));
+  }
+  return n;
+}
+
+function orderedOverview(rows, threaded, sort) {
+  sort = sort || "new";
+  const text = (v) => String(v || "");
+  if (!threaded) {
+    const out = rows.slice();
+    if (sort === "old") out.sort((a,b) => a.num - b.num);
+    else if (sort === "subject") out.sort((a,b) => text(a.subject).localeCompare(text(b.subject)) || a.num - b.num);
+    else if (sort === "from") out.sort((a,b) => text(a.from).localeCompare(text(b.from)) || a.num - b.num);
+    else out.sort((a,b) => b.num - a.num);
+    return out;
+  }
   const byId = {};
   rows.forEach(r => { byId[r.message_id] = r; });
   const children = {};
@@ -562,13 +680,17 @@ function orderedOverview(rows, threaded) {
       (children[parent] = children[parent] || []).push(r);
     } else roots.push(r);
   });
+  Object.keys(children).forEach(id => children[id].sort((a,b) => a.num - b.num));
+  if (sort === "old") roots.sort((a,b) => threadStamp(a, children) - threadStamp(b, children) || a.num - b.num);
+  else if (sort === "subject") roots.sort((a,b) => text(a.subject).localeCompare(text(b.subject)) || a.num - b.num);
+  else if (sort === "from") roots.sort((a,b) => text(a.from).localeCompare(text(b.from)) || a.num - b.num);
+  else roots.sort((a,b) => threadStamp(b, children) - threadStamp(a, children) || b.num - a.num);
   const out = [];
   function walk(r, depth) {
     out.push(Object.assign({}, r, {_depth: depth}));
-    (children[r.message_id]||[]).sort((a,b)=>a.num-b.num).forEach(c => walk(c, depth+1));
+    (children[r.message_id]||[]).forEach(c => walk(c, depth+1));
   }
-  roots.sort((a,b)=>a.num-b.num).forEach(r => walk(r, 0));
-  // orphans already in roots if parent missing
+  roots.forEach(r => walk(r, 0));
   return out;
 }
 
@@ -586,7 +708,8 @@ async function openGroup(name) {
 }
 
 function renderOverview(lastRead) {
-  const rows = orderedOverview(overview, $("threaded").checked);
+  lastReadNum = lastRead || 0;
+  const rows = orderedOverview(overview, $("threaded").checked, $("ovsort").value);
   $("overview").innerHTML = rows.map(r => {
     const depth = r._depth != null ? r._depth : threadDepth(r.references);
     const unread = r.num > lastRead;
@@ -603,7 +726,9 @@ $("overview").onclick = async (e) => {
   await openArticle(Number(b.dataset.n));
 };
 
-$("threaded").onchange = () => { if (curGroup) openGroup(curGroup); };
+$("threaded").onchange = () => { if (curGroup) renderOverview(lastReadNum); };
+$("ovsort").onchange = () => { if (curGroup) renderOverview(lastReadNum); };
+$("ovrefresh").onclick = () => refreshOverviewKeepArt();
 
 async function openArticle(num) {
   if (!curGroup) return;
@@ -833,8 +958,35 @@ $("opschg").onclick = async () => {
 };
 
 // Admin
+async function loadBans() {
+  const d = await j("/api/group-bans");
+  $("bans").innerHTML = (d.patterns||[]).map(p =>
+    `<tr><td class="mono">${esc(p)}</td><td><button class="secondary" data-ban="${esc(p)}">Remove</button></td></tr>`
+  ).join("") || `<tr><td colspan="2" class="help">No ignored groups.</td></tr>`;
+}
+$("bans").onclick = async (e) => {
+  const b = e.target.closest("button[data-ban]");
+  if (!b) return;
+  try {
+    await j("/api/group-bans?pattern=" + encodeURIComponent(b.dataset.ban), {method:"DELETE"});
+    $("banmsg").textContent = "removed";
+    await loadBans();
+  } catch (err) { $("banmsg").textContent = err.message; }
+};
+$("banadd").onclick = async () => {
+  try {
+    await j("/api/group-bans", {
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({pattern:$("banpat").value})
+    });
+    $("banpat").value = "";
+    $("banmsg").textContent = "ignored";
+    await loadBans();
+  } catch (e) { $("banmsg").textContent = e.message; }
+};
+
 async function loadAdmin() {
-  await Promise.all([loadStatus(), loadGroups(), loadArts(), loadUsers(), loadJobs()]);
+  await Promise.all([loadStatus(), loadGroups(), loadArts(), loadUsers(), loadJobs(), loadBans()]);
 }
 // Peers
 let peerEdit = null;

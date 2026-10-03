@@ -23,14 +23,19 @@ func TestAllowedEmptyAndCIDR(t *testing.T) {
 	}
 }
 
-func TestAllowedPeersOnly(t *testing.T) {
+func TestAllowedPeersDoNotCloseInbound(t *testing.T) {
 	cfg := config.Config{}
 	peers := []string{"news-b", "news-c"}
+	if !Allowed(cfg, "8.8.8.8:119", peers) {
+		t.Fatal("configured peers should not close inbound")
+	}
+	off := false
+	cfg.Inbound.Open = &off
 	if Allowed(cfg, "8.8.8.8:119", peers) {
-		t.Fatal("random IP should deny when peers configured")
+		t.Fatal("open:false should deny a random IP")
 	}
 	if !Allowed(cfg, "news-b:119", peers) {
-		t.Fatal("configured peer hostname should allow")
+		t.Fatal("open:false should still allow a configured peer")
 	}
 }
 
@@ -47,7 +52,18 @@ func TestOpen(t *testing.T) {
 	if !Open(cfg, nil) {
 		t.Fatal("dev default should be open")
 	}
-	if Open(cfg, []string{"news-a"}) {
-		t.Fatal("peers configured should not be wide open")
+	if !Open(cfg, []string{"news-a"}) {
+		t.Fatal("configured peers should leave inbound open")
+	}
+	off := false
+	cfg.Inbound.Open = &off
+	if Open(cfg, nil) {
+		t.Fatal("open:false should not be open")
+	}
+	on := true
+	cfg.Inbound.Open = &on
+	cfg.Inbound.Allow = []string{"10.0.0.0/8"}
+	if !Open(cfg, []string{"news-a"}) {
+		t.Fatal("open:true should allow every remote")
 	}
 }

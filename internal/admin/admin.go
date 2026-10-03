@@ -42,7 +42,8 @@ type Portal struct {
 	feeder  *feed.Feeder
 	inpaths *inpaths.Logger
 	ops     *ops.Controller
-	sess    *auth.Sessions
+	signMu  sync.Mutex
+	signer  *auth.Signer
 	started time.Time
 	jobsMu  sync.Mutex
 	jobs    map[string]*store.ArchiveJob
@@ -57,7 +58,7 @@ func New(cfg config.Config, st store.Store, mbox *archive.MBox, feeder *feed.Fee
 		ctl = ops.New()
 	}
 	return &Portal{
-		cfg: cfg, st: st, mbox: mbox, feeder: feeder, inpaths: paths, ops: ctl, sess: auth.NewSessions(),
+		cfg: cfg, st: st, mbox: mbox, feeder: feeder, inpaths: paths, ops: ctl,
 		started: time.Now().UTC(), jobs: map[string]*store.ArchiveJob{}, log: lg,
 	}
 }
@@ -69,6 +70,8 @@ func (p *Portal) Handler() http.Handler {
 	mux.HandleFunc("/api/login", p.login)
 	mux.HandleFunc("/api/logout", p.logout)
 	mux.HandleFunc("/api/me", p.me)
+	mux.HandleFunc("/api/me/password", p.withAuth(p.changePassword, false))
+	mux.HandleFunc("/api/group-bans", p.withAuth(p.groupBans, true))
 	mux.HandleFunc("/api/status", p.withAuth(p.status, false))
 	mux.HandleFunc("/api/groups", p.withAuth(p.groups, true))
 	mux.HandleFunc("/api/articles", p.withAuth(p.articles, false))
@@ -108,7 +111,83 @@ func (p *Portal) currentUser(r *http.Request) (store.User, bool) {
 	if err != nil {
 		return store.User{}, false
 	}
-	return p.sess.Get(c.Value)
+	sg, err := p.signerFor(r.Context())
+	if err != nil {
+		return store.User{}, false
+	}
+	tok, ok := sg.Open(c.Value)
+	if !ok {
+		return store.User{}, false
+	}
+	u, err := p.st.GetUserByID(r.Context(), tok.UserID)
+	if err != nil || u == nil || u.Disabled || u.SessionGen != tok.Gen {
+		return store.User{}, false
+	}
+	return *u, true
+}
+
+func (p *Portal) signerFor(ctx context.Context) (*auth.Signer, error) {
+	p.signMu.Lock()
+	defer p.signMu.Unlock()
+	if p.signer != nil {
+		return p.signer, nil
+	}
+	secret, err := p.st.GetOrCreateSecret(ctx, "session")
+	if err != nil {
+		return nil, err
+	}
+	p.signer = auth.NewSigner([]byte(secret))
+	return p.signer, nil
+}
+
+func requestIsHTTPS(r *http.Request) bool {
+	if r.TLS != nil {
+		return true
+	}
+	return strings.EqualFold(strings.TrimSpace(r.Header.Get("X-Forwarded-Proto")), "https")
+}
+
+func (p *Portal) setSessionCookie(w http.ResponseWriter, r *http.Request, u store.User, remember bool) error {
+	sg, err := p.signerFor(r.Context())
+	if err != nil {
+		return err
+	}
+	ttl := auth.SessionTTL
+	if remember {
+		ttl = auth.RememberTTL
+	}
+	exp := time.Now().Add(ttl)
+	token, err := sg.Seal(u.ID, u.SessionGen, exp, remember)
+	if err != nil {
+		return err
+	}
+	c := &http.Cookie{
+		Name:     auth.SessionCookie,
+		Value:    token,
+		Path:     "/",
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		Secure:   requestIsHTTPS(r),
+	}
+	if remember {
+		c.MaxAge = int(ttl.Seconds())
+		c.Expires = exp
+	}
+	http.SetCookie(w, c)
+	return nil
+}
+
+func (p *Portal) cookieRemembers(r *http.Request) bool {
+	c, err := r.Cookie(auth.SessionCookie)
+	if err != nil {
+		return false
+	}
+	sg, err := p.signerFor(r.Context())
+	if err != nil {
+		return false
+	}
+	tok, ok := sg.Open(c.Value)
+	return ok && tok.Remember
 }
 
 type handlerFunc func(http.ResponseWriter, *http.Request, store.User)
@@ -127,6 +206,10 @@ func (p *Portal) withAuth(next handlerFunc, adminOnly bool) http.HandlerFunc {
 		u, ok := p.currentUser(r)
 		if !ok {
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "login required"})
+			return
+		}
+		if u.MustChangePassword && r.URL.Path != "/api/me/password" {
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "password change required"})
 			return
 		}
 		if adminOnly && !u.IsAdmin() {
@@ -176,12 +259,10 @@ func (p *Portal) setup(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, err)
 			return
 		}
-		id, err := p.sess.Create(*u)
-		if err != nil {
+		if err := p.setSessionCookie(w, r, *u, true); err != nil {
 			writeErr(w, err)
 			return
 		}
-		http.SetCookie(w, &http.Cookie{Name: auth.SessionCookie, Value: id, Path: "/", HttpOnly: true, SameSite: http.SameSiteLaxMode})
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "user": publicUser(*u)})
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
@@ -196,6 +277,7 @@ func (p *Portal) login(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Username string `json:"username"`
 		Password string `json:"password"`
+		Remember bool   `json:"remember"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
@@ -210,38 +292,147 @@ func (p *Portal) login(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "invalid credentials"})
 		return
 	}
-	id, err := p.sess.Create(*u)
-	if err != nil {
+	if err := p.setSessionCookie(w, r, *u, in.Remember); err != nil {
 		writeErr(w, err)
 		return
 	}
-	http.SetCookie(w, &http.Cookie{Name: auth.SessionCookie, Value: id, Path: "/", HttpOnly: true, SameSite: http.SameSiteLaxMode})
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "user": publicUser(*u)})
 }
 
 func (p *Portal) logout(w http.ResponseWriter, r *http.Request) {
-	if c, err := r.Cookie(auth.SessionCookie); err == nil {
-		p.sess.Delete(c.Value)
-	}
-	http.SetCookie(w, &http.Cookie{Name: auth.SessionCookie, Value: "", Path: "/", MaxAge: -1})
+	http.SetCookie(w, &http.Cookie{
+		Name: auth.SessionCookie, Value: "", Path: "/", MaxAge: -1,
+		HttpOnly: true, SameSite: http.SameSiteLaxMode, Secure: requestIsHTTPS(r),
+	})
 	writeJSON(w, http.StatusOK, map[string]string{"ok": "1"})
 }
 
 func (p *Portal) me(w http.ResponseWriter, r *http.Request) {
-	need, err := p.needsSetup(r.Context())
+	switch r.Method {
+	case http.MethodGet:
+		need, err := p.needsSetup(r.Context())
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		u, ok := p.currentUser(r)
+		writeJSON(w, http.StatusOK, map[string]any{
+			"needs_setup": need,
+			"user":        publicUser(u),
+			"logged_in":   ok,
+			"hostname":    p.cfg.Server.Hostname,
+			"can_post":    ok && u.MayPost(),
+			"is_admin":    ok && u.IsAdmin(),
+		})
+	case http.MethodPatch:
+		u, ok := p.currentUser(r)
+		if !ok {
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "login required"})
+			return
+		}
+		if u.MustChangePassword {
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "password change required"})
+			return
+		}
+		var in struct {
+			DisplayName string `json:"display_name"`
+			Email       string `json:"email"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		name := strings.TrimSpace(in.DisplayName)
+		email := strings.TrimSpace(in.Email)
+		if strings.ContainsAny(name, "\r\n") || strings.ContainsAny(email, "\r\n \t") {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "name and email must be a single line"})
+			return
+		}
+		if email != "" && !strings.Contains(email, "@") {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "email must contain @"})
+			return
+		}
+		if err := p.st.UpdateProfile(r.Context(), u.Username, name, email); err != nil {
+			writeErr(w, err)
+			return
+		}
+		u.DisplayName = name
+		u.Email = email
+		writeJSON(w, http.StatusOK, map[string]any{"user": publicUser(u)})
+	default:
+		w.WriteHeader(http.StatusMethodNotAllowed)
+	}
+}
+
+func (p *Portal) changePassword(w http.ResponseWriter, r *http.Request, u store.User) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	var in struct {
+		Current string `json:"current_password"`
+		New     string `json:"new_password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	if !auth.CheckPassword(u.PasswordHash, in.Current) {
+		writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "current password is wrong"})
+		return
+	}
+	hash, err := auth.HashPassword(in.New)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	nu, err := p.st.ChangePassword(r.Context(), u.Username, hash)
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
-	u, ok := p.currentUser(r)
-	writeJSON(w, http.StatusOK, map[string]any{
-		"needs_setup": need,
-		"user":        publicUser(u),
-		"logged_in":   ok,
-		"hostname":    p.cfg.Server.Hostname,
-		"can_post":    ok && u.MayPost(),
-		"is_admin":    ok && u.IsAdmin(),
-	})
+	if err := p.setSessionCookie(w, r, *nu, p.cookieRemembers(r)); err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"user": publicUser(*nu)})
+}
+
+func (p *Portal) groupBans(w http.ResponseWriter, r *http.Request, _ store.User) {
+	switch r.Method {
+	case http.MethodGet:
+		list, err := p.st.ListGroupBans(r.Context())
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		if list == nil {
+			list = []string{}
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"patterns": list})
+	case http.MethodPost:
+		var in struct {
+			Pattern string `json:"pattern"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		if err := p.st.AddGroupBan(r.Context(), in.Pattern); err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"ok": strings.TrimSpace(in.Pattern)})
+	case http.MethodDelete:
+		pattern := r.URL.Query().Get("pattern")
+		if err := p.st.DeleteGroupBan(r.Context(), pattern); err != nil {
+			writeErr(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"ok": pattern})
+	default:
+		w.WriteHeader(http.StatusMethodNotAllowed)
+	}
 }
 
 func publicUser(u store.User) map[string]any {
@@ -250,6 +441,7 @@ func publicUser(u store.User) map[string]any {
 	}
 	return map[string]any{
 		"id": u.ID, "username": u.Username, "role": u.Role, "can_post": u.CanPost, "disabled": u.Disabled,
+		"display_name": u.DisplayName, "email": u.Email, "must_change_password": u.MustChangePassword,
 	}
 }
 
@@ -483,6 +675,7 @@ func (p *Portal) users(w http.ResponseWriter, r *http.Request, me store.User) {
 		}
 		u, err := p.st.CreateUser(r.Context(), store.User{
 			Username: in.Username, PasswordHash: hash, Role: role, CanPost: canPost,
+			MustChangePassword: true,
 		})
 		if err != nil {
 			writeErr(w, err)

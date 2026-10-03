@@ -2,11 +2,22 @@ package store
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
 )
+
+const userCols = `id, username, password_hash, role, can_post, disabled, display_name, email, must_change_password, session_gen, created_at`
+
+func scanUser(sc interface{ Scan(dest ...any) error }) (User, error) {
+	var u User
+	err := sc.Scan(&u.ID, &u.Username, &u.PasswordHash, &u.Role, &u.CanPost, &u.Disabled,
+		&u.DisplayName, &u.Email, &u.MustChangePassword, &u.SessionGen, &u.CreatedAt)
+	return u, err
+}
 
 func (p *Postgres) CountUsers(ctx context.Context) (int, error) {
 	var n int
@@ -15,17 +26,15 @@ func (p *Postgres) CountUsers(ctx context.Context) (int, error) {
 }
 
 func (p *Postgres) ListUsers(ctx context.Context) ([]User, error) {
-	rows, err := p.pool.Query(ctx, `
-		SELECT id, username, password_hash, role, can_post, disabled, created_at
-		FROM users ORDER BY username`)
+	rows, err := p.pool.Query(ctx, `SELECT `+userCols+` FROM users ORDER BY username`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	var out []User
 	for rows.Next() {
-		var u User
-		if err := rows.Scan(&u.ID, &u.Username, &u.PasswordHash, &u.Role, &u.CanPost, &u.Disabled, &u.CreatedAt); err != nil {
+		u, err := scanUser(rows)
+		if err != nil {
 			return nil, err
 		}
 		out = append(out, u)
@@ -34,11 +43,18 @@ func (p *Postgres) ListUsers(ctx context.Context) ([]User, error) {
 }
 
 func (p *Postgres) GetUser(ctx context.Context, username string) (*User, error) {
-	var u User
-	err := p.pool.QueryRow(ctx, `
-		SELECT id, username, password_hash, role, can_post, disabled, created_at
-		FROM users WHERE username = $1`, strings.TrimSpace(username)).
-		Scan(&u.ID, &u.Username, &u.PasswordHash, &u.Role, &u.CanPost, &u.Disabled, &u.CreatedAt)
+	u, err := scanUser(p.pool.QueryRow(ctx, `SELECT `+userCols+` FROM users WHERE username = $1`, strings.TrimSpace(username)))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &u, nil
+}
+
+func (p *Postgres) GetUserByID(ctx context.Context, id int64) (*User, error) {
+	u, err := scanUser(p.pool.QueryRow(ctx, `SELECT `+userCols+` FROM users WHERE id = $1`, id))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
@@ -57,11 +73,12 @@ func (p *Postgres) CreateUser(ctx context.Context, u User) (*User, error) {
 		u.Role = RoleUser
 	}
 	err := p.pool.QueryRow(ctx, `
-		INSERT INTO users (username, password_hash, role, can_post, disabled)
-		VALUES ($1, $2, $3, $4, $5)
-		RETURNING id, created_at`,
-		u.Username, u.PasswordHash, u.Role, u.CanPost, u.Disabled).
-		Scan(&u.ID, &u.CreatedAt)
+		INSERT INTO users (username, password_hash, role, can_post, disabled, display_name, email, must_change_password)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		RETURNING id, session_gen, created_at`,
+		u.Username, u.PasswordHash, u.Role, u.CanPost, u.Disabled,
+		strings.TrimSpace(u.DisplayName), strings.TrimSpace(u.Email), u.MustChangePassword).
+		Scan(&u.ID, &u.SessionGen, &u.CreatedAt)
 	if err != nil {
 		if strings.Contains(err.Error(), "unique") || strings.Contains(err.Error(), "duplicate") {
 			return nil, ErrUserExists
@@ -85,16 +102,108 @@ func (p *Postgres) UpdateUser(ctx context.Context, username string, role string,
 	if canPost != nil {
 		u.CanPost = *canPost
 	}
+	wasDisabled := u.Disabled
 	if disabled != nil {
 		u.Disabled = *disabled
 	}
 	if passwordHash != "" {
 		u.PasswordHash = passwordHash
+		u.MustChangePassword = true
+	}
+	bump := 0
+	if passwordHash != "" {
+		bump++
+	}
+	if disabled != nil && *disabled && !wasDisabled {
+		bump++
 	}
 	_, err = p.pool.Exec(ctx, `
-		UPDATE users SET role=$2, can_post=$3, disabled=$4, password_hash=$5 WHERE username=$1`,
-		u.Username, u.Role, u.CanPost, u.Disabled, u.PasswordHash)
+		UPDATE users SET role=$2, can_post=$3, disabled=$4, password_hash=$5,
+			must_change_password=$6, session_gen=session_gen+$7
+		WHERE username=$1`,
+		u.Username, u.Role, u.CanPost, u.Disabled, u.PasswordHash, u.MustChangePassword, bump)
 	return err
+}
+
+func (p *Postgres) UpdateProfile(ctx context.Context, username, displayName, email string) error {
+	tag, err := p.pool.Exec(ctx, `
+		UPDATE users SET display_name=$2, email=$3 WHERE username=$1`,
+		strings.TrimSpace(username), strings.TrimSpace(displayName), strings.TrimSpace(email))
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrUserNotFound
+	}
+	return nil
+}
+
+func (p *Postgres) ChangePassword(ctx context.Context, username, passwordHash string) (*User, error) {
+	if passwordHash == "" {
+		return nil, errors.New("password required")
+	}
+	u, err := scanUser(p.pool.QueryRow(ctx, `
+		UPDATE users SET password_hash=$2, must_change_password=false, session_gen=session_gen+1
+		WHERE username=$1
+		RETURNING `+userCols,
+		strings.TrimSpace(username), passwordHash))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrUserNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &u, nil
+}
+
+func (p *Postgres) GetOrCreateSecret(ctx context.Context, name string) (string, error) {
+	var b [32]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", err
+	}
+	var out string
+	err := p.pool.QueryRow(ctx, `
+		INSERT INTO server_secrets (name, value) VALUES ($1, $2)
+		ON CONFLICT (name) DO UPDATE SET value = server_secrets.value
+		RETURNING value`, strings.TrimSpace(name), hex.EncodeToString(b[:])).Scan(&out)
+	return out, err
+}
+
+func (p *Postgres) ListGroupBans(ctx context.Context) ([]string, error) {
+	rows, err := p.pool.Query(ctx, `SELECT pattern FROM group_bans ORDER BY pattern`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var ptn string
+		if err := rows.Scan(&ptn); err != nil {
+			return nil, err
+		}
+		out = append(out, ptn)
+	}
+	return out, rows.Err()
+}
+
+func (p *Postgres) AddGroupBan(ctx context.Context, pattern string) error {
+	pattern = strings.TrimSpace(pattern)
+	if pattern == "" || strings.ContainsAny(pattern, " \t\r\n") {
+		return errors.New("invalid pattern")
+	}
+	_, err := p.pool.Exec(ctx, `INSERT INTO group_bans (pattern) VALUES ($1) ON CONFLICT DO NOTHING`, pattern)
+	return err
+}
+
+func (p *Postgres) DeleteGroupBan(ctx context.Context, pattern string) error {
+	tag, err := p.pool.Exec(ctx, `DELETE FROM group_bans WHERE pattern=$1`, strings.TrimSpace(pattern))
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return errors.New("ban not found")
+	}
+	return nil
 }
 
 func (p *Postgres) DeleteUser(ctx context.Context, username string) error {

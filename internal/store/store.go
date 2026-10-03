@@ -78,9 +78,9 @@ type FeedQueueItem struct {
 
 // FeedQueueStats summarizes outbound backlog.
 type FeedQueueStats struct {
-	Depth     int            `json:"depth"`
-	ByPeer    map[int64]int  `json:"by_peer,omitempty"`
-	OldestAge time.Duration  `json:"oldest_age_ns"`
+	Depth     int           `json:"depth"`
+	ByPeer    map[int64]int `json:"by_peer,omitempty"`
+	OldestAge time.Duration `json:"oldest_age_ns"`
 }
 
 var (
@@ -156,9 +156,16 @@ type Store interface {
 	CountUsers(ctx context.Context) (int, error)
 	ListUsers(ctx context.Context) ([]User, error)
 	GetUser(ctx context.Context, username string) (*User, error)
+	GetUserByID(ctx context.Context, id int64) (*User, error)
 	CreateUser(ctx context.Context, u User) (*User, error)
 	UpdateUser(ctx context.Context, username string, role string, canPost, disabled *bool, passwordHash string) error
+	UpdateProfile(ctx context.Context, username, displayName, email string) error
+	ChangePassword(ctx context.Context, username, passwordHash string) (*User, error)
 	DeleteUser(ctx context.Context, username string) error
+	GetOrCreateSecret(ctx context.Context, name string) (string, error)
+	ListGroupBans(ctx context.Context) ([]string, error)
+	AddGroupBan(ctx context.Context, pattern string) error
+	DeleteGroupBan(ctx context.Context, pattern string) error
 
 	ListPeers(ctx context.Context) ([]Peer, error)
 	ListEnabledPeers(ctx context.Context) ([]Peer, error)

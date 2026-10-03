@@ -140,7 +140,34 @@ func OpenPostgres(ctx context.Context, url string) (*Postgres, error) {
 		pool.Close()
 		return nil, err
 	}
+	if err := p.migrateUsers(ctx); err != nil {
+		pool.Close()
+		return nil, err
+	}
 	return p, nil
+}
+
+func (p *Postgres) migrateUsers(ctx context.Context) error {
+	alters := []string{
+		`ALTER TABLE users ADD COLUMN IF NOT EXISTS display_name TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE users ADD COLUMN IF NOT EXISTS email TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE users ADD COLUMN IF NOT EXISTS must_change_password BOOLEAN NOT NULL DEFAULT false`,
+		`ALTER TABLE users ADD COLUMN IF NOT EXISTS session_gen INT NOT NULL DEFAULT 0`,
+		`CREATE TABLE IF NOT EXISTS server_secrets (
+			name TEXT PRIMARY KEY,
+			value TEXT NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS group_bans (
+			pattern TEXT PRIMARY KEY,
+			created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+		)`,
+	}
+	for _, q := range alters {
+		if _, err := p.pool.Exec(ctx, q); err != nil {
+			return fmt.Errorf("user migrate: %w", err)
+		}
+	}
+	return nil
 }
 
 func (p *Postgres) migrateGroupOrigin(ctx context.Context) error {

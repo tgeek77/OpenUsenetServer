@@ -1,6 +1,6 @@
 # OpenUsenetServer
 
-**Version 0.5.0**
+**Version 0.6.0**
 
 A modern easy-to-setup NNTP server based on [INN](https://www.eyrie.org/~eagle/software/inn/).
 
@@ -59,7 +59,7 @@ printf 'CAPABILITIES\r\nQUIT\r\n' | timeout 3 nc 127.0.0.1 119
 # admin (public): https://$ADMIN_DOMAIN/   # Caddy + Let's Encrypt; see docs/tls.md
 ```
 
-Compose uses `jsevans/openusenet:0.5.0` by default (`OPENUSENET_IMAGE` overrides the tag).
+Compose uses `jsevans/openusenet:0.6.0` by default (`OPENUSENET_IMAGE` overrides the tag).
 
 Default seed group: `local.test`, plus the ISC `active` / `newsgroups` files from https://ftp.isc.org/usenet/CONFIG/ (pulled on `openusenet migrate`).
 
@@ -70,7 +70,7 @@ Caddy terminates HTTPS for the admin portal on ports 80/443. Port 8080 is bound 
 Only needed if you are developing OUS or want an unreleased tree:
 
 ```bash
-docker build -t jsevans/openusenet:0.5.0 -t jsevans/openusenet:latest .
+docker build -t jsevans/openusenet:0.6.0 -t jsevans/openusenet:latest .
 # or: docker compose build
 docker compose up -d
 ```

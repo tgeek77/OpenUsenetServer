@@ -1,6 +1,20 @@
 package wildmat
 
-import "testing"
+import (
+	"reflect"
+	"testing"
+)
+
+func TestKeepGroups(t *testing.T) {
+	got := KeepGroups([]string{"alt.binaries.*", "local.banned"}, []string{"alt.binaries.foo", "local.test", "local.banned"})
+	want := []string{"local.test"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("%v", got)
+	}
+	if all := KeepGroups(nil, []string{"a"}); len(all) != 1 || all[0] != "a" {
+		t.Fatalf("%v", all)
+	}
+}
 
 func TestMatch(t *testing.T) {
 	cases := []struct {

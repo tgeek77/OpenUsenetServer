@@ -2,10 +2,12 @@ package store
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"sort"
-	"strings"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -42,6 +44,8 @@ type Memory struct {
 	alerts   []memAlert
 	binQuota map[string]int
 	feedQ    []FeedQueueItem
+	secrets  map[string]string
+	bans     []string
 
 	statGroupDay   map[string]map[string]statGB // day -> group -> counts
 	statGroupTotal map[string]statGB            // group -> counts
@@ -627,6 +631,18 @@ func (m *Memory) GetUser(_ context.Context, username string) (*User, error) {
 	return &cp, nil
 }
 
+func (m *Memory) GetUserByID(_ context.Context, id int64) (*User, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, u := range m.users {
+		if u.ID == id {
+			cp := *u
+			return &cp, nil
+		}
+	}
+	return nil, nil
+}
+
 func (m *Memory) CreateUser(_ context.Context, u User) (*User, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -655,6 +671,7 @@ func (m *Memory) UpdateUser(_ context.Context, username string, role string, can
 	if !ok {
 		return ErrUserNotFound
 	}
+	wasDisabled := u.Disabled
 	if role != "" {
 		u.Role = role
 	}
@@ -666,8 +683,97 @@ func (m *Memory) UpdateUser(_ context.Context, username string, role string, can
 	}
 	if passwordHash != "" {
 		u.PasswordHash = passwordHash
+		u.MustChangePassword = true
+		u.SessionGen++
+	}
+	if disabled != nil && *disabled && !wasDisabled {
+		u.SessionGen++
 	}
 	return nil
+}
+
+func (m *Memory) UpdateProfile(_ context.Context, username, displayName, email string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	u, ok := m.users[strings.TrimSpace(username)]
+	if !ok {
+		return ErrUserNotFound
+	}
+	u.DisplayName = strings.TrimSpace(displayName)
+	u.Email = strings.TrimSpace(email)
+	return nil
+}
+
+func (m *Memory) ChangePassword(_ context.Context, username, passwordHash string) (*User, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	u, ok := m.users[strings.TrimSpace(username)]
+	if !ok {
+		return nil, ErrUserNotFound
+	}
+	if passwordHash == "" {
+		return nil, errors.New("password required")
+	}
+	u.PasswordHash = passwordHash
+	u.MustChangePassword = false
+	u.SessionGen++
+	cp := *u
+	return &cp, nil
+}
+
+func (m *Memory) GetOrCreateSecret(_ context.Context, name string) (string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.secrets == nil {
+		m.secrets = map[string]string{}
+	}
+	if v, ok := m.secrets[name]; ok {
+		return v, nil
+	}
+	var b [32]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", err
+	}
+	v := hex.EncodeToString(b[:])
+	m.secrets[name] = v
+	return v, nil
+}
+
+func (m *Memory) ListGroupBans(_ context.Context) ([]string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := append([]string(nil), m.bans...)
+	sort.Strings(out)
+	return out, nil
+}
+
+func (m *Memory) AddGroupBan(_ context.Context, pattern string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	pattern = strings.TrimSpace(pattern)
+	if pattern == "" || strings.ContainsAny(pattern, " \t\r\n") {
+		return errors.New("invalid pattern")
+	}
+	for _, p := range m.bans {
+		if p == pattern {
+			return nil
+		}
+	}
+	m.bans = append(m.bans, pattern)
+	return nil
+}
+
+func (m *Memory) DeleteGroupBan(_ context.Context, pattern string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	pattern = strings.TrimSpace(pattern)
+	for i, p := range m.bans {
+		if p == pattern {
+			m.bans = append(m.bans[:i], m.bans[i+1:]...)
+			return nil
+		}
+	}
+	return errors.New("ban not found")
 }
 
 func (m *Memory) DeleteUser(_ context.Context, username string) error {
