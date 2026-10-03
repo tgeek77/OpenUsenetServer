@@ -76,6 +76,13 @@ type SiteCount struct {
 	Count int64  `json:"count"`
 }
 
+// ShameEntry is one ignored pattern or blocked group on the public hall of shame.
+type ShameEntry struct {
+	Kind   string `json:"kind"` // ignored | blocked
+	Name   string `json:"name"`
+	Detail string `json:"detail,omitempty"`
+}
+
 // ContentStats is the reader Stats dashboard payload.
 type ContentStats struct {
 	PopulatedGroups   int64                  `json:"populated_groups"`
@@ -85,6 +92,7 @@ type ContentStats struct {
 	TopPostersTotal   []FromCount            `json:"top_posters_total"`
 	TopProvidersToday []SiteCount            `json:"top_providers_today"`
 	TopProvidersTotal []SiteCount            `json:"top_providers_total"`
+	HallOfShame       []ShameEntry           `json:"hall_of_shame"`
 }
 
 func (p *Postgres) RecordContentStats(ctx context.Context, ev ContentStatsEvent) error {
@@ -234,6 +242,67 @@ func (p *Postgres) ContentStats(ctx context.Context) (ContentStats, error) {
 	out.TopProvidersTotal, err = p.topPathAll(ctx, 10)
 	if err != nil {
 		return out, err
+	}
+	out.HallOfShame, err = p.hallOfShame(ctx)
+	if err != nil {
+		return out, err
+	}
+	return out, nil
+}
+
+func (p *Postgres) hallOfShame(ctx context.Context) ([]ShameEntry, error) {
+	out := []ShameEntry{}
+	seen := map[string]bool{}
+	rows, err := p.pool.Query(ctx, `
+		SELECT group_name, detail FROM group_alerts WHERE status=$1 ORDER BY group_name`, AlertBlocked)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var name, detail string
+		if err := rows.Scan(&name, &detail); err != nil {
+			return nil, err
+		}
+		seen[name] = true
+		out = append(out, ShameEntry{Kind: "blocked", Name: name, Detail: detail})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	groups, err := p.pool.Query(ctx, `
+		SELECT name FROM newsgroups WHERE retention_mode=$1 ORDER BY name`, RetentionModeBlocked)
+	if err != nil {
+		return nil, err
+	}
+	defer groups.Close()
+	for groups.Next() {
+		var name string
+		if err := groups.Scan(&name); err != nil {
+			return nil, err
+		}
+		if seen[name] {
+			continue
+		}
+		out = append(out, ShameEntry{Kind: "blocked", Name: name})
+	}
+	if err := groups.Err(); err != nil {
+		return nil, err
+	}
+	bans, err := p.pool.Query(ctx, `SELECT pattern FROM group_bans ORDER BY pattern`)
+	if err != nil {
+		return nil, err
+	}
+	defer bans.Close()
+	for bans.Next() {
+		var pattern string
+		if err := bans.Scan(&pattern); err != nil {
+			return nil, err
+		}
+		out = append(out, ShameEntry{Kind: "ignored", Name: pattern})
+	}
+	if err := bans.Err(); err != nil {
+		return nil, err
 	}
 	return out, nil
 }

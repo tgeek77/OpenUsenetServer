@@ -310,6 +310,16 @@ button.ovitem .depth { color: var(--muted); }
 <main id="stats" class="hidden">
   <div class="cards" id="statcards"></div>
   <section class="panel">
+    <h2>Hall of shame</h2>
+    <p class="help">Binary groups this server ignores or has blocked. Articles in them are deleted and not kept, including crossposts.</p>
+    <div class="scrollbox">
+      <table>
+        <thead><tr><th>Kind</th><th>Group</th><th>Detail</th></tr></thead>
+        <tbody id="shame"></tbody>
+      </table>
+    </div>
+  </section>
+  <section class="panel">
     <h2>Top non-binary groups</h2>
     <p class="help">Popularity from accept-time rollups (text posts only). Crossposts count once per group.</p>
     <div class="row">
@@ -1065,6 +1075,10 @@ function renderContentStats() {
   fromRows("statposterstot", contentStats.top_posters_total);
   siteRows("statprovday", contentStats.top_providers_today);
   siteRows("statprovtot", contentStats.top_providers_total);
+  const shame = contentStats.hall_of_shame || [];
+  $("shame").innerHTML = shame.map(r =>
+    `<tr><td>${esc(r.kind)}</td><td class="mono">${esc(r.name)}</td><td>${esc(r.detail||"")}</td></tr>`
+  ).join("") || `<tr><td colspan="3">No ignored or blocked groups.</td></tr>`;
 }
 
 async function loadStats() {

@@ -1249,7 +1249,36 @@ func (m *Memory) ContentStats(_ context.Context) (ContentStats, error) {
 	out.TopPostersTotal = rankFromAllMem(m.statFromDay, 10)
 	out.TopProvidersToday = rankPathMem(m.statPathDay[today], 10)
 	out.TopProvidersTotal = rankPathAllMem(m.statPathDay, 10)
+	out.HallOfShame = m.hallOfShameLocked()
 	return out, nil
+}
+
+func (m *Memory) hallOfShameLocked() []ShameEntry {
+	m.ensureRetentionMaps()
+	out := []ShameEntry{}
+	seen := map[string]bool{}
+	for _, a := range m.alerts {
+		if a.Status != AlertBlocked {
+			continue
+		}
+		seen[a.GroupName] = true
+		out = append(out, ShameEntry{Kind: "blocked", Name: a.GroupName, Detail: a.Detail})
+	}
+	for name, g := range m.groups {
+		if g.RetentionMode == RetentionModeBlocked && !seen[name] {
+			out = append(out, ShameEntry{Kind: "blocked", Name: name})
+		}
+	}
+	for _, pattern := range m.bans {
+		out = append(out, ShameEntry{Kind: "ignored", Name: pattern})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Kind != out[j].Kind {
+			return out[i].Kind < out[j].Kind
+		}
+		return out[i].Name < out[j].Name
+	})
+	return out
 }
 
 func rankGroupsMem(m map[string]statGB, textOnly bool) []NameCount {

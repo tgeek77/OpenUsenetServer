@@ -48,6 +48,13 @@ func TestPurgeIgnoredGroupDeletesArticles(t *testing.T) {
 	if err != nil || !unwanted {
 		t.Fatalf("crosspost into an ignored group should be unwanted: %v %v", unwanted, err)
 	}
+	stats, err := st.ContentStats(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stats.HallOfShame) != 1 || stats.HallOfShame[0].Kind != "ignored" || stats.HallOfShame[0].Name != "alt.binaries.*" {
+		t.Fatalf("hall of shame %+v", stats.HallOfShame)
+	}
 }
 
 func TestPurgeBlockedGroupDeletesArticles(t *testing.T) {
@@ -70,5 +77,12 @@ func TestPurgeBlockedGroupDeletesArticles(t *testing.T) {
 	unwanted, err := GroupsUnwanted(ctx, st, []string{"alt.binaries.flood", "misc.test"})
 	if err != nil || !unwanted {
 		t.Fatalf("blocked group should make the article unwanted: %v %v", unwanted, err)
+	}
+	stats, err := st.ContentStats(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stats.HallOfShame) != 1 || stats.HallOfShame[0].Kind != "blocked" || stats.HallOfShame[0].Name != "alt.binaries.flood" {
+		t.Fatalf("hall of shame %+v", stats.HallOfShame)
 	}
 }
