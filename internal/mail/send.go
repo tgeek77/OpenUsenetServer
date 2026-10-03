@@ -46,10 +46,38 @@ func Send(ctx context.Context, s Settings, msg Message) error {
 		return fmt.Errorf("subject must be a single line")
 	}
 	raw := buildMessage(fromHeader, to, cc, subject, msg.Body)
+	return sendBytes(ctx, s, envelope, append(to, cc...), raw)
+}
 
+// SendRaw delivers raw SMTP DATA bytes. The envelope sender is Settings.From.
+// raw must already be a complete message; this does not add Subject or MIME headers.
+func SendRaw(ctx context.Context, s Settings, recipients []string, raw []byte) error {
+	s = s.Normalize()
+	if err := s.Validate(); err != nil {
+		return err
+	}
+	if s.Host == "" {
+		return fmt.Errorf("mail server is not configured")
+	}
+	envelope, err := Envelope(s.From)
+	if err != nil {
+		return err
+	}
+	rcpts := cleanAddrs(recipients)
+	if len(rcpts) == 0 {
+		return fmt.Errorf("no recipients")
+	}
+	if strings.TrimSpace(string(raw)) == "" {
+		return fmt.Errorf("empty message")
+	}
+	return sendBytes(ctx, s, envelope, rcpts, raw)
+}
+
+func sendBytes(ctx context.Context, s Settings, envelope string, recipients []string, raw []byte) error {
 	addr := net.JoinHostPort(s.Host, fmt.Sprintf("%d", s.Port))
 	dialer := &net.Dialer{Timeout: 20 * time.Second}
 	var conn net.Conn
+	var err error
 	if s.Security == SecurityTLS {
 		conn, err = tlsDial(ctx, dialer, addr, s.Host)
 	} else {
@@ -85,7 +113,7 @@ func Send(ctx context.Context, s Settings, msg Message) error {
 	if err := c.Mail(envelope); err != nil {
 		return fmt.Errorf("smtp MAIL FROM: %w", err)
 	}
-	for _, rcpt := range append(append([]string{}, to...), cc...) {
+	for _, rcpt := range recipients {
 		if err := c.Rcpt(rcpt); err != nil {
 			return fmt.Errorf("smtp RCPT TO %s: %w", rcpt, err)
 		}

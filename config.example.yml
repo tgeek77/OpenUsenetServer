@@ -105,6 +105,9 @@ groups_source:
 
 # Outbound SMTP for a traditional Postfix, sendmail, or submission relay.
 # The admin portal can store an override of this block. OAuth (Gmail and similar) is not supported.
+# Unapproved local posts to a group with status m are mailed with this server and are not stored or fed.
+# Public groups use the group name with dots changed to hyphens at moderators.isc.org.
+# A local moderated group can use a different address from the admin portal.
 # Local relay: host 127.0.0.1, port 25, security plain, no username.
 # Remote submission: port 587, security starttls, username and password.
 # mail:

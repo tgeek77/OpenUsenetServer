@@ -41,6 +41,30 @@ func TestSendPlainNoSTARTTLS(t *testing.T) {
 	}
 }
 
+func TestSendRawKeepsArticle(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	got := make(chan string, 1)
+	go serveSMTP(t, ln, false, got)
+	raw := []byte("To: misc-test-moderated@moderators.isc.org\r\nFrom: poster@example.org\r\nSubject: hello\r\n\r\nbody\r\n")
+	err = SendRaw(context.Background(), Settings{
+		Host: "127.0.0.1", Port: portOf(ln), Security: SecurityPlain, From: "news@news.example.org",
+	}, []string{"misc-test-moderated@moderators.isc.org"}, raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := <-got
+	if !strings.Contains(body, "MAIL FROM:<news@news.example.org>") || !strings.Contains(body, "RCPT TO:<misc-test-moderated@moderators.isc.org>") {
+		t.Fatalf("envelope:\n%s", body)
+	}
+	if !strings.Contains(body, "From: poster@example.org") || strings.Count(body, "Subject:") != 1 || strings.Contains(body, "MIME-Version") {
+		t.Fatalf("data was wrapped:\n%s", body)
+	}
+}
+
 func TestSendRequiresSTARTTLS(t *testing.T) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

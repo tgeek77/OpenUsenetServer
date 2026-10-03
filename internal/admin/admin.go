@@ -84,6 +84,7 @@ func (p *Portal) Handler() http.Handler {
 	mux.HandleFunc("/api/inpaths", p.withAuth(p.inpathsAPI, true))
 	mux.HandleFunc("/api/mail/test", p.withAuth(p.mailTest, true))
 	mux.HandleFunc("/api/mail", p.withAuth(p.mailAPI, true))
+	mux.HandleFunc("/api/moderators", p.withAuth(p.moderatorsAPI, true))
 	mux.HandleFunc("/api/archive", p.withAuth(p.archiveAPI, true))
 	mux.HandleFunc("/api/archive/import", p.withAuth(p.archiveImport, true))
 	mux.HandleFunc("/api/archive/jobs", p.withAuth(p.archiveJobs, true))

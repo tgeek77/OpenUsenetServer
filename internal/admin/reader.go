@@ -335,10 +335,19 @@ func (p *Portal) readerPost(w http.ResponseWriter, r *http.Request, u store.User
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
+	if res.Mailed != nil {
+		writeJSON(w, http.StatusOK, map[string]any{
+			"moderated":  true,
+			"group":      res.Mailed.Group,
+			"address":    res.Mailed.Address,
+			"message_id": res.Mailed.MessageID,
+		})
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"message_id": res.MessageID,
-		"xref":       res.Xref,
-		"numbers":    res.Numbers,
+		"message_id": res.Stored.MessageID,
+		"xref":       res.Stored.Xref,
+		"numbers":    res.Stored.Numbers,
 	})
 }
 

@@ -323,7 +323,7 @@ button.ovitem .depth { color: var(--muted); }
   </section>
   <section class="panel" id="mailpanel">
     <h2>Mail server</h2>
-    <p class="help">Outbound SMTP for a Postfix, sendmail, or other traditional mail server. A local relay is usually <span class="mono">127.0.0.1</span> port 25, security plain, with no username. A remote submission port is usually 587 with STARTTLS. The password is not shown again after you save it; leave that field blank to keep the saved one.</p>
+    <p class="help">Outbound SMTP for a Postfix, sendmail, or other traditional mail server. A local relay is usually <span class="mono">127.0.0.1</span> port 25, security plain, with no username. A remote submission port is usually 587 with STARTTLS. The password is not shown again after you save it; leave that field blank to keep the saved one. Unapproved posts to moderated groups are mailed with these settings and are not stored here. The From address is the envelope sender.</p>
     <p class="mono" id="mailsrc"></p>
     <div class="grid2">
       <label>Host <input id="mailhost" placeholder="127.0.0.1" autocomplete="off"></label>
@@ -349,6 +349,20 @@ button.ovitem .depth { color: var(--muted); }
       <button class="secondary" id="mailtest">Send test</button>
       <span class="mono" id="mailmsg"></span>
     </div>
+  </section>
+  <section class="panel" id="modpanel">
+    <h2>Moderated groups</h2>
+    <p class="help">A local post to a group with status <span class="mono">m</span> and no Approved header is mailed and not stored or offered to peers. Public groups use <span class="mono" id="moddefault">%s@moderators.isc.org</span>, with each dot in the group name turned into a hyphen, so misc.test.moderated goes to misc-test-moderated@moderators.isc.org. Add a row when a local group should use a different address. The first matching pattern wins.</p>
+    <div class="row">
+      <input id="modpat" placeholder="local.*" size="22" autocomplete="off">
+      <input id="modaddr" placeholder="moderator@example.org" size="36" autocomplete="off">
+      <button id="modadd">Add</button>
+    </div>
+    <p class="mono" id="modmsg"></p>
+    <table>
+      <thead><tr><th>Pattern</th><th>Address</th><th></th></tr></thead>
+      <tbody id="modrules"></tbody>
+    </table>
   </section>
   <div id="peermodal" class="modal hidden">
     <div class="modalbox">
@@ -823,6 +837,11 @@ $("csend").onclick = async () => {
       body.references = (replyTo.references ? replyTo.references + " " : "") + replyTo.message_id;
     }
     const d = await j("/api/reader/post", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify(body)});
+    if (d.moderated) {
+      $("cmsg").textContent = "mailed to moderator for " + d.group + " (" + d.address + ")";
+      $("compose").classList.add("hidden");
+      return;
+    }
     $("cmsg").textContent = "posted " + d.message_id;
     $("compose").classList.add("hidden");
     const g = curGroup || body.newsgroups.split(",")[0].trim();
@@ -1023,8 +1042,38 @@ $("banadd").onclick = async () => {
 };
 
 async function loadAdmin() {
-  await Promise.all([loadStatus(), loadGroups(), loadArts(), loadUsers(), loadJobs(), loadBans(), loadMail()]);
+  await Promise.all([loadStatus(), loadGroups(), loadArts(), loadUsers(), loadJobs(), loadBans(), loadMail(), loadModerators()]);
 }
+
+async function loadModerators() {
+  const d = await j("/api/moderators");
+  if (d.default) $("moddefault").textContent = d.default;
+  const rows = d.rules || [];
+  $("modrules").innerHTML = rows.map(r =>
+    `<tr><td class="mono">${esc(r.pattern)}</td><td class="mono">${esc(r.address)}</td><td><button class="secondary" data-mod="${esc(r.pattern)}">Remove</button></td></tr>`
+  ).join("") || `<tr><td colspan="3" class="help">No local overrides. Public moderated groups use the default address.</td></tr>`;
+}
+$("modrules").onclick = async (e) => {
+  const b = e.target.closest("button[data-mod]");
+  if (!b) return;
+  try {
+    await j("/api/moderators?pattern=" + encodeURIComponent(b.dataset.mod), {method:"DELETE"});
+    $("modmsg").textContent = "removed";
+    await loadModerators();
+  } catch (err) { $("modmsg").textContent = err.message; }
+};
+$("modadd").onclick = async () => {
+  try {
+    await j("/api/moderators", {
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({pattern:$("modpat").value, address:$("modaddr").value})
+    });
+    $("modpat").value = "";
+    $("modaddr").value = "";
+    $("modmsg").textContent = "added";
+    await loadModerators();
+  } catch (e) { $("modmsg").textContent = e.message; }
+};
 
 async function loadMail() {
   const d = await j("/api/mail");

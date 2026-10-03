@@ -47,6 +47,7 @@ type Memory struct {
 	feedQ     []FeedQueueItem
 	secrets   map[string]string
 	bans      []string
+	modRules  []ModeratorRule
 	mailSaved bool
 	mailSet   mail.Settings
 

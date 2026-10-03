@@ -123,6 +123,13 @@ type PostResult struct {
 	Numbers   map[string]int64 // group -> article number
 }
 
+// ModeratorRule is a local submission address. Pattern is one wildmat.
+// Address may contain a single %s, replaced with the group name using hyphens for dots.
+type ModeratorRule struct {
+	Pattern string `json:"pattern"`
+	Address string `json:"address"`
+}
+
 type Store interface {
 	EnsureGroup(ctx context.Context, name, desc, status string) error
 	EnsureGroups(ctx context.Context, groups []Group) error
@@ -171,6 +178,11 @@ type Store interface {
 	ListGroupBans(ctx context.Context) ([]string, error)
 	AddGroupBan(ctx context.Context, pattern string) error
 	DeleteGroupBan(ctx context.Context, pattern string) error
+	// ListModeratorRules returns local submission overrides in first-match order.
+	// The public default is not stored here.
+	ListModeratorRules(ctx context.Context) ([]ModeratorRule, error)
+	AddModeratorRule(ctx context.Context, pattern, address string) error
+	DeleteModeratorRule(ctx context.Context, pattern string) error
 
 	ListPeers(ctx context.Context) ([]Peer, error)
 	ListEnabledPeers(ctx context.Context) ([]Peer, error)

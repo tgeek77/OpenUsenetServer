@@ -12,6 +12,8 @@ import (
 	"openusenet/internal/article"
 	"openusenet/internal/binary"
 	"openusenet/internal/config"
+	"openusenet/internal/mail"
+	"openusenet/internal/moderate"
 	"openusenet/internal/retention"
 	"openusenet/internal/store"
 	"openusenet/internal/wildmat"
@@ -32,8 +34,23 @@ type Input struct {
 	ReplyToID  string `json:"reply_to_msgid"`
 }
 
-// Accept validates, injects, stores, appends mbox, and offers to peers.
-func Accept(ctx context.Context, cfg config.Config, st store.Store, mbox *archive.MBox, feeder Feeder, lg *log.Logger, in Input, userID int64) (*store.PostResult, error) {
+// Outcome is a stored article or a moderated submission that was mailed.
+type Outcome struct {
+	Stored *store.PostResult
+	Mailed *Mailed
+}
+
+// Mailed is a local post sent to a moderator and not stored.
+type Mailed struct {
+	Group     string
+	Address   string
+	MessageID string
+}
+
+// Accept validates and injects a local post. An unapproved article for a
+// moderated group is mailed and not stored. Anything else is stored, appended
+// to the mbox, and offered to peers.
+func Accept(ctx context.Context, cfg config.Config, st store.Store, mbox *archive.MBox, feeder Feeder, lg *log.Logger, in Input, userID int64) (*Outcome, error) {
 	if lg == nil {
 		lg = log.Default()
 	}
@@ -100,15 +117,11 @@ func Accept(ctx context.Context, cfg config.Config, st store.Store, mbox *archiv
 		}
 		return nil, fmt.Errorf("article too old")
 	}
-	approved := strings.TrimSpace(art.Get("Approved")) != ""
-	for _, name := range art.Newsgroups() {
-		g, err := st.GetGroup(ctx, name)
+	if mailed, err := mailModerated(ctx, cfg, st, lg, art); err != nil || mailed != nil {
 		if err != nil {
 			return nil, err
 		}
-		if g != nil && g.Status == "m" && !approved {
-			return nil, fmt.Errorf("moderated group %s requires Approved", name)
-		}
+		return &Outcome{Mailed: mailed}, nil
 	}
 	isBin := binary.LooksBinary(art.RawHeaders, art.Body)
 	if isBin && userID > 0 {
@@ -158,5 +171,47 @@ func Accept(ctx context.Context, cfg config.Config, st store.Store, mbox *archiv
 	if feeder != nil {
 		feeder.Offer(msgid, art.Get("Path"), art.Newsgroups(), wire)
 	}
-	return res, nil
+	return &Outcome{Stored: res}, nil
+}
+
+func mailModerated(ctx context.Context, cfg config.Config, st store.Store, lg *log.Logger, art *article.Article) (*Mailed, error) {
+	approved := strings.TrimSpace(art.Get("Approved")) != ""
+	group, err := moderate.Target(art.Newsgroups(), approved, func(name string) (string, bool, error) {
+		g, err := st.GetGroup(ctx, name)
+		if err != nil {
+			return "", false, err
+		}
+		if g == nil {
+			return "", false, nil
+		}
+		return g.Status, true, nil
+	})
+	if err != nil || group == "" {
+		return nil, err
+	}
+	dup, err := st.HasMessageID(ctx, art.Get("Message-ID"))
+	if err != nil {
+		return nil, err
+	}
+	if dup {
+		return nil, store.ErrDuplicate
+	}
+	stored, err := st.ListModeratorRules(ctx)
+	if err != nil {
+		return nil, err
+	}
+	rules := make([]moderate.Rule, len(stored))
+	for i, r := range stored {
+		rules[i] = moderate.Rule{Pattern: r.Pattern, Address: r.Address}
+	}
+	settings, err := mail.Load(ctx, st, cfg)
+	if err != nil {
+		return nil, err
+	}
+	addr, err := moderate.Submit(ctx, settings, group, rules, art.Wire())
+	if err != nil {
+		return nil, err
+	}
+	lg.Printf("moderated submit group=%s to=%s msgid=%s", group, addr, art.Get("Message-ID"))
+	return &Mailed{Group: group, Address: addr, MessageID: art.Get("Message-ID")}, nil
 }

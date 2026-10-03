@@ -19,6 +19,8 @@ import (
 	"openusenet/internal/config"
 	controlmsg "openusenet/internal/control"
 	"openusenet/internal/inbound"
+	"openusenet/internal/mail"
+	"openusenet/internal/moderate"
 	"openusenet/internal/ops"
 	"openusenet/internal/peerauth"
 	"openusenet/internal/retention"
@@ -756,18 +758,54 @@ func (s *Session) checkCutoff(art *article.Article, rejectCode int) error {
 	return s.conn.Reply(rejectCode, "article too old")
 }
 
-func (s *Session) checkModerated(ctx context.Context, art *article.Article, rejectCode int) error {
+// submitModerated mails a local unapproved post and does not store it.
+// A nil return means the article is not a moderated submission.
+// Transit IHAVE is unchanged: a feed is not mailed to a moderator.
+func (s *Session) submitModerated(ctx context.Context, art *article.Article) error {
 	approved := strings.TrimSpace(art.Get("Approved")) != ""
-	for _, name := range art.Newsgroups() {
+	group, err := moderate.Target(art.Newsgroups(), approved, func(name string) (string, bool, error) {
 		g, err := s.store.GetGroup(ctx, name)
-		if err != nil || g == nil {
-			continue
+		if err != nil {
+			return "", false, err
 		}
-		if g.Status == "m" && !approved {
-			return s.conn.Reply(rejectCode, "moderated group requires Approved")
+		if g == nil {
+			return "", false, nil
 		}
+		return g.Status, true, nil
+	})
+	if err != nil {
+		return replied(s.conn.Reply(FailPostReject, err.Error()))
 	}
-	return nil
+	if group == "" {
+		return nil
+	}
+	dup, err := s.store.HasMessageID(ctx, art.Get("Message-ID"))
+	if err != nil {
+		return err
+	}
+	if dup {
+		return replied(s.conn.Reply(FailPostReject, "duplicate Message-ID"))
+	}
+	stored, err := s.store.ListModeratorRules(ctx)
+	if err != nil {
+		return err
+	}
+	rules := make([]moderate.Rule, len(stored))
+	for i, r := range stored {
+		rules[i] = moderate.Rule{Pattern: r.Pattern, Address: r.Address}
+	}
+	settings, err := mail.Load(ctx, s.store, s.cfg)
+	if err != nil {
+		return replied(s.conn.Reply(FailPostReject, err.Error()))
+	}
+	addr, err := moderate.Submit(ctx, settings, group, rules, art.Wire())
+	if err != nil {
+		return replied(s.conn.Reply(FailPostReject, err.Error()))
+	}
+	if s.log != nil {
+		s.log.Printf("moderated submit group=%s to=%s msgid=%s", group, addr, art.Get("Message-ID"))
+	}
+	return replied(s.conn.Reply(OKPost, "mailed to moderator for "+group))
 }
 
 func (s *Session) handleControl(ctx context.Context, art *article.Article) (skipStore bool, err error) {
@@ -920,7 +958,7 @@ func cmdPost(s *Session, _ []string) error {
 	} else if err != nil {
 		return s.conn.Reply(FailPostReject, err.Error())
 	}
-	if err := s.checkModerated(ctx, art, FailPostReject); err != nil {
+	if err := s.submitModerated(ctx, art); err != nil {
 		return err
 	}
 	isBin := binary.LooksBinary(art.RawHeaders, art.Body)

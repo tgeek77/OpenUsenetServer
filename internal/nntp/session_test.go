@@ -3,13 +3,17 @@ package nntp_test
 import (
 	"bufio"
 	"context"
+	"fmt"
 	"net"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"openusenet/internal/article"
 	"openusenet/internal/config"
+	"openusenet/internal/mail"
+	"openusenet/internal/moderate"
 	"openusenet/internal/nntp"
 	"openusenet/internal/store"
 )
@@ -526,5 +530,126 @@ func TestIHaveNewgroupControl(t *testing.T) {
 	}
 	if g.Description != "Demo control-created group" {
 		t.Fatalf("desc %q", g.Description)
+	}
+}
+
+func TestPostMailsModeratedGroup(t *testing.T) {
+	c, st := startTestServer(t)
+	ctx := context.Background()
+	if err := st.EnsureGroup(ctx, "misc.test.moderated", "moderated test", "m"); err != nil {
+		t.Fatal(err)
+	}
+	r := bufio.NewReader(c)
+	_ = readLine(t, r)
+	post := func(art string) string {
+		t.Helper()
+		if _, err := c.Write([]byte("POST\r\n")); err != nil {
+			t.Fatal(err)
+		}
+		if l := readLine(t, r); !strings.HasPrefix(l, "340 ") {
+			t.Fatalf("cont %q", l)
+		}
+		if _, err := c.Write([]byte(art)); err != nil {
+			t.Fatal(err)
+		}
+		return readLine(t, r)
+	}
+	plain := "From: tester@example.com\r\nNewsgroups: misc.test.moderated\r\nSubject: please approve\r\n\r\nhello\r\n.\r\n"
+	if l := post(plain); !strings.HasPrefix(l, "441 ") || !strings.Contains(l, "mail server is not configured") {
+		t.Fatalf("unconfigured %q", l)
+	}
+	if n, err := st.CountArticles(ctx); err != nil || n != 0 {
+		t.Fatalf("stored %d %v", n, err)
+	}
+
+	if err := st.SaveMailSettings(ctx, mail.Settings{
+		Host: "127.0.0.1", Port: 25, From: "news@news.test", Security: "plain",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var calls atomic.Int32
+	var raw string
+	restore := moderate.SetDeliver(func(_ context.Context, s mail.Settings, to []string, body []byte) error {
+		calls.Add(1)
+		if s.From != "news@news.test" || len(to) != 1 || to[0] != "misc-test-moderated@moderators.isc.org" {
+			return fmt.Errorf("envelope from %s to %v", s.From, to)
+		}
+		raw = string(body)
+		return nil
+	})
+	t.Cleanup(restore)
+
+	if l := post(plain); !strings.HasPrefix(l, "240 ") || !strings.Contains(l, "mailed to moderator for misc.test.moderated") {
+		t.Fatalf("mailed %q", l)
+	}
+	if calls.Load() != 1 || !strings.Contains(raw, "From: tester@example.com") || !strings.Contains(raw, "Subject: please approve") || strings.Contains(raw, "Auto-Submitted") {
+		t.Fatalf("calls %d raw %q", calls.Load(), raw)
+	}
+	if n, _ := st.CountArticles(ctx); n != 0 {
+		t.Fatalf("mailed article was stored, count %d", n)
+	}
+
+	approved := "From: tester@example.com\r\nNewsgroups: misc.test.moderated\r\nSubject: approved\r\nApproved: mod@example.org\r\nMessage-ID: <approved-mod@news.test>\r\n\r\nkept\r\n.\r\n"
+	if l := post(approved); !strings.HasPrefix(l, "240 ") || strings.Contains(l, "mailed") {
+		t.Fatalf("approved %q", l)
+	}
+	if calls.Load() != 1 {
+		t.Fatal("approved article was mailed")
+	}
+	if n, _ := st.CountArticles(ctx); n != 1 {
+		t.Fatalf("approved count %d", n)
+	}
+	dup := "From: tester@example.com\r\nNewsgroups: misc.test.moderated\r\nSubject: again\r\nMessage-ID: <approved-mod@news.test>\r\n\r\nagain\r\n.\r\n"
+	if l := post(dup); !strings.Contains(l, "duplicate") {
+		t.Fatalf("dup %q", l)
+	}
+	if calls.Load() != 1 {
+		t.Fatal("duplicate was mailed")
+	}
+}
+
+func TestIHaveUnapprovedModeratedStaysStored(t *testing.T) {
+	c, st := startTestServer(t)
+	if err := st.EnsureGroup(context.Background(), "misc.test.moderated", "", "m"); err != nil {
+		t.Fatal(err)
+	}
+	var mailed atomic.Bool
+	restore := moderate.SetDeliver(func(context.Context, mail.Settings, []string, []byte) error {
+		mailed.Store(true)
+		return fmt.Errorf("transit was mailed")
+	})
+	t.Cleanup(restore)
+	r := bufio.NewReader(c)
+	_ = readLine(t, r)
+	msgid := "<unapproved-transit@news.test>"
+	if _, err := c.Write([]byte("IHAVE " + msgid + "\r\n")); err != nil {
+		t.Fatal(err)
+	}
+	if l := readLine(t, r); !strings.HasPrefix(l, "335 ") {
+		t.Fatalf("cont %q", l)
+	}
+	art := "Path: other!not-for-mail\r\n" +
+		"From: a@b.c\r\n" +
+		"Newsgroups: misc.test.moderated\r\n" +
+		"Subject: transit\r\n" +
+		"Date: Mon, 01 Jan 2024 00:00:00 +0000\r\n" +
+		"Message-ID: " + msgid + "\r\n" +
+		"\r\n" +
+		"body\r\n.\r\n"
+	if _, err := c.Write([]byte(art)); err != nil {
+		t.Fatal(err)
+	}
+	if l := readLine(t, r); !strings.HasPrefix(l, "235 ") {
+		t.Fatalf("ihave %q", l)
+	}
+	if mailed.Load() {
+		t.Fatal("transit article was mailed")
+	}
+	if _, err := c.Write([]byte("ARTICLE " + msgid + "\r\n")); err != nil {
+		t.Fatal(err)
+	}
+	first, _ := readBlock(t, r)
+	if !strings.HasPrefix(first, "220 ") {
+		t.Fatalf("not stored %q", first)
 	}
 }
