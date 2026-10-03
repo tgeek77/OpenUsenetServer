@@ -221,7 +221,9 @@ func InjectForPost(a *Article, opt InjectOpts) error {
 		a.Set("Organization", opt.Organization)
 	}
 	if !a.Has("Injection-Date") {
-		a.Set("Injection-Date", opt.Now.UTC().Format("20060102150405")+"Z")
+		// INN parses this with parsedate_rfc5322_lax and rejects the
+		// compact YYYYMMDDHHMMSSZ form, then remembers the message-id.
+		a.Set("Injection-Date", opt.Now.UTC().Format(time.RFC1123Z))
 	}
 	if !a.Has("Injection-Info") {
 		a.Set("Injection-Info", fmt.Sprintf("%s; posting-account=\"openusenet\"", opt.Hostname))

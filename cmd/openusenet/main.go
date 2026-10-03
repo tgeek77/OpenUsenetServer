@@ -16,6 +16,7 @@ import (
 	controlmsg "openusenet/internal/control"
 	"openusenet/internal/inpaths"
 	"openusenet/internal/isc"
+	"openusenet/internal/mail"
 	"openusenet/internal/nntp"
 	"openusenet/internal/server"
 	"openusenet/internal/store"
@@ -475,13 +476,16 @@ func cmdInpaths(args []string) error {
 		if err != nil {
 			return err
 		}
-		if cfg.Inpaths.Report.SMTPHost == "" {
-			return fmt.Errorf("inpaths.report.smtp_host required (or pipe openusenet inpaths report to mail)")
+		settings, err := mail.ForInpaths(context.Background(), nil, cfg)
+		if err != nil {
+			return err
+		}
+		if settings.Host == "" {
+			return fmt.Errorf("mail.host or inpaths.report.smtp_host required (or pipe openusenet inpaths report to mail)")
 		}
 		if err := inpaths.SendReport(body, pathhost, cfg.InpathsMailTo(), cfg.Inpaths.Report.MailCC, inpaths.MailOpts{
-			Host: cfg.Inpaths.Report.SMTPHost, Port: cfg.Inpaths.Report.SMTPPort,
-			Username: cfg.Inpaths.Report.SMTPUser, Password: cfg.Inpaths.Report.SMTPPass,
-			From: cfg.Inpaths.Report.From,
+			Host: settings.Host, Port: settings.Port, Username: settings.Username, Password: settings.Password,
+			From: settings.From, Security: settings.Security,
 		}); err != nil {
 			return err
 		}

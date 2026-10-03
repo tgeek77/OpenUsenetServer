@@ -103,6 +103,18 @@ groups_source:
 #     - group-admin@isc.org
 #     - "@example.org"
 
+# Outbound SMTP for a traditional Postfix, sendmail, or submission relay.
+# The admin portal can store an override of this block. OAuth (Gmail and similar) is not supported.
+# Local relay: host 127.0.0.1, port 25, security plain, no username.
+# Remote submission: port 587, security starttls, username and password.
+# mail:
+#   host: 127.0.0.1
+#   port: 25
+#   security: plain          # auto | starttls | plain | tls
+#   username: ""
+#   password: ""
+#   from: news@news.example.org
+
 # TOP1000 path statistics (required by many peers, e.g. Eternal September).
 # Path headers are logged on POST/IHAVE; flush dumps and mail reports to top1000@anthologeek.net.
 # inpaths:

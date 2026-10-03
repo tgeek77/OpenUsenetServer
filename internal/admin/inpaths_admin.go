@@ -1,21 +1,29 @@
 package admin
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"time"
 
 	"openusenet/internal/inpaths"
+	"openusenet/internal/mail"
 	"openusenet/internal/store"
 )
 
-func (p *Portal) inpathsStatus() map[string]any {
+func (p *Portal) inpathsStatus(ctx context.Context) map[string]any {
+	smtpOn := p.cfg.Inpaths.Report.SMTPHost != ""
+	if !smtpOn {
+		if s, err := mail.Load(ctx, p.st, p.cfg); err == nil && s.Host != "" {
+			smtpOn = true
+		}
+	}
 	st := map[string]any{
 		"enabled":  p.cfg.InpathsEnabled(),
 		"dir":      p.cfg.InpathsDir(),
 		"schedule": p.cfg.Inpaths.Schedule,
 		"mailto":   p.cfg.InpathsMailTo(),
-		"smtp":     p.cfg.Inpaths.Report.SMTPHost != "",
+		"smtp":     smtpOn,
 	}
 	if !p.cfg.InpathsEnabled() {
 		return st
@@ -37,7 +45,7 @@ func (p *Portal) inpathsAPI(w http.ResponseWriter, r *http.Request, _ store.User
 	case http.MethodGet:
 		report, _ := p.inpathsReportBody(false)
 		writeJSON(w, http.StatusOK, map[string]any{
-			"status": p.inpathsStatus(),
+			"status": p.inpathsStatus(r.Context()),
 			"report": report,
 		})
 	case http.MethodPost:
@@ -59,36 +67,40 @@ func (p *Portal) inpathsAPI(w http.ResponseWriter, r *http.Request, _ store.User
 				writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 				return
 			}
-			writeJSON(w, http.StatusOK, map[string]any{"ok": path, "status": p.inpathsStatus()})
+			writeJSON(w, http.StatusOK, map[string]any{"ok": path, "status": p.inpathsStatus(r.Context())})
 		case "report":
 			body, err := p.inpathsReportBody(true)
 			if err != nil {
 				writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 				return
 			}
-			writeJSON(w, http.StatusOK, map[string]any{"report": body, "status": p.inpathsStatus()})
+			writeJSON(w, http.StatusOK, map[string]any{"report": body, "status": p.inpathsStatus(r.Context())})
 		case "send":
 			body, err := p.inpathsReportBody(true)
 			if err != nil {
 				writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 				return
 			}
-			if p.cfg.Inpaths.Report.SMTPHost == "" {
+			s, err := mail.ForInpaths(r.Context(), p.st, p.cfg)
+			if err != nil {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+				return
+			}
+			if s.Host == "" {
 				writeJSON(w, http.StatusBadRequest, map[string]string{
-					"error":  "smtp_host not configured — use openusenet inpaths report and mail manually, or set inpaths.report.smtp_host",
+					"error":  "mail server is not configured — set it on this page, or set mail.host / inpaths.report.smtp_host",
 					"report": body,
 				})
 				return
 			}
 			if err := inpaths.SendReport(body, p.cfg.Server.Pathhost, p.cfg.InpathsMailTo(), p.cfg.Inpaths.Report.MailCC, inpaths.MailOpts{
-				Host: p.cfg.Inpaths.Report.SMTPHost, Port: p.cfg.Inpaths.Report.SMTPPort,
-				Username: p.cfg.Inpaths.Report.SMTPUser, Password: p.cfg.Inpaths.Report.SMTPPass,
-				From:     p.cfg.Inpaths.Report.From,
+				Host: s.Host, Port: s.Port, Username: s.Username, Password: s.Password,
+				From: s.From, Security: s.Security,
 			}); err != nil {
 				writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 				return
 			}
-			writeJSON(w, http.StatusOK, map[string]any{"ok": "sent", "status": p.inpathsStatus()})
+			writeJSON(w, http.StatusOK, map[string]any{"ok": "sent", "status": p.inpathsStatus(r.Context())})
 		default:
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "action must be flush, report, or send"})
 		}

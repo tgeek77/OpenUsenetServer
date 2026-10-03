@@ -45,6 +45,12 @@ services:
       OPENUSENET_CLEANFEED_COMMAND: ${OPENUSENET_CLEANFEED_COMMAND:-perl /usr/local/lib/openusenet/cleanfeed-filter.pl}
       OPENUSENET_CLEANFEED_SCRIPT: ${OPENUSENET_CLEANFEED_SCRIPT:-/usr/local/lib/cleanfeed-ng/cleanfeed}
       OPENUSENET_CLEANFEED_CONFIG_DIR: ${OPENUSENET_CLEANFEED_CONFIG_DIR:-/usr/local/lib/cleanfeed-ng/etc}
+      OPENUSENET_SMTP_HOST: ${OPENUSENET_SMTP_HOST:-}
+      OPENUSENET_SMTP_PORT: ${OPENUSENET_SMTP_PORT:-}
+      OPENUSENET_SMTP_SECURITY: ${OPENUSENET_SMTP_SECURITY:-}
+      OPENUSENET_SMTP_USER: ${OPENUSENET_SMTP_USER:-}
+      OPENUSENET_SMTP_PASSWORD: ${OPENUSENET_SMTP_PASSWORD:-}
+      OPENUSENET_SMTP_FROM: ${OPENUSENET_SMTP_FROM:-}
     volumes:
       - archive:/var/spool/openusenet/archive
       - exports:/var/spool/openusenet/exports

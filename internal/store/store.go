@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"time"
+
+	"openusenet/internal/mail"
 )
 
 type Group struct {
@@ -163,6 +165,9 @@ type Store interface {
 	ChangePassword(ctx context.Context, username, passwordHash string) (*User, error)
 	DeleteUser(ctx context.Context, username string) error
 	GetOrCreateSecret(ctx context.Context, name string) (string, error)
+	// GetMailSettings reports saved=false when the admin portal has not stored a row.
+	GetMailSettings(ctx context.Context) (mail.Settings, bool, error)
+	SaveMailSettings(ctx context.Context, s mail.Settings) error
 	ListGroupBans(ctx context.Context) ([]string, error)
 	AddGroupBan(ctx context.Context, pattern string) error
 	DeleteGroupBan(ctx context.Context, pattern string) error

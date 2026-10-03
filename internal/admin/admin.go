@@ -82,6 +82,8 @@ func (p *Portal) Handler() http.Handler {
 	mux.HandleFunc("/api/peers/import-inn", p.withAuth(p.peersImportINN, true))
 	mux.HandleFunc("/api/peers/our-side", p.withAuth(p.peersOurSide, true))
 	mux.HandleFunc("/api/inpaths", p.withAuth(p.inpathsAPI, true))
+	mux.HandleFunc("/api/mail/test", p.withAuth(p.mailTest, true))
+	mux.HandleFunc("/api/mail", p.withAuth(p.mailAPI, true))
 	mux.HandleFunc("/api/archive", p.withAuth(p.archiveAPI, true))
 	mux.HandleFunc("/api/archive/import", p.withAuth(p.archiveImport, true))
 	mux.HandleFunc("/api/archive/jobs", p.withAuth(p.archiveJobs, true))
@@ -522,7 +524,7 @@ func (p *Portal) status(w http.ResponseWriter, r *http.Request, _ store.User) {
 			"mode":    p.cfg.Cleanfeed.Mode,
 		},
 		"archive_schedule": p.cfg.Archive.Schedule,
-		"inpaths":          p.inpathsStatus(),
+		"inpaths":          p.inpathsStatus(ctx),
 		"our_side":         p.ourSideSnippets(inn.ExportOpts{}),
 	})
 }

@@ -18,6 +18,7 @@ import (
 	controlmsg "openusenet/internal/control"
 	"openusenet/internal/feed"
 	"openusenet/internal/inpaths"
+	"openusenet/internal/mail"
 	"openusenet/internal/nntp"
 	"openusenet/internal/ops"
 	"openusenet/internal/peerauth"
@@ -262,7 +263,12 @@ func (s *Server) runInpathsSchedule(ctx context.Context) {
 				s.log.Printf("inpaths flushed %s", path)
 			}
 		}
-		if strings.TrimSpace(s.cfg.Inpaths.Report.SMTPHost) == "" {
+		settings, err := mail.ForInpaths(ctx, s.st, s.cfg)
+		if err != nil {
+			s.log.Printf("inpaths mail: %v", err)
+			return
+		}
+		if strings.TrimSpace(settings.Host) == "" {
 			return
 		}
 		st, err := inpaths.LoadDumps(s.cfg.InpathsDir(), 32*24*time.Hour)
@@ -275,9 +281,8 @@ func (s *Server) runInpathsSchedule(ctx context.Context) {
 			return
 		}
 		if err := inpaths.SendReport(body, s.cfg.Server.Pathhost, s.cfg.InpathsMailTo(), s.cfg.Inpaths.Report.MailCC, inpaths.MailOpts{
-			Host: s.cfg.Inpaths.Report.SMTPHost, Port: s.cfg.Inpaths.Report.SMTPPort,
-			Username: s.cfg.Inpaths.Report.SMTPUser, Password: s.cfg.Inpaths.Report.SMTPPass,
-			From: s.cfg.Inpaths.Report.From,
+			Host: settings.Host, Port: settings.Port, Username: settings.Username, Password: settings.Password,
+			From: settings.From, Security: settings.Security,
 		}); err != nil {
 			s.log.Printf("inpaths send: %v", err)
 			return

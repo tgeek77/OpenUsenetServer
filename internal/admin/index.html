@@ -310,7 +310,7 @@ button.ovitem .depth { color: var(--muted); }
   </section>
   <section class="panel" id="top1000panel">
     <h2>TOP1000 path statistics</h2>
-    <p class="help">Peers such as <a href="https://eternal-september.org/index.php?showpage=peering" target="_blank" rel="noopener">Eternal September</a> expect participation in the <a href="http://top1000.anthologeek.net/#participate" target="_blank" rel="noopener">TOP1000</a> project. Path headers from POST and IHAVE are aggregated into ninpaths-compatible reports mailed to <code>top1000@anthologeek.net</code>. Enable with <code>inpaths.enabled: true</code> in config.yml.</p>
+    <p class="help">Peers such as <a href="https://eternal-september.org/index.php?showpage=peering" target="_blank" rel="noopener">Eternal September</a> expect participation in the <a href="http://top1000.anthologeek.net/#participate" target="_blank" rel="noopener">TOP1000</a> project. Path headers from POST and IHAVE are aggregated into ninpaths-compatible reports mailed to <code>top1000@anthologeek.net</code>. Enable with <code>inpaths.enabled: true</code> in config.yml. Send uses the mail server below unless <code>inpaths.report.smtp_host</code> is set.</p>
     <p class="mono" id="inpathsstat"></p>
     <div class="row">
       <button class="secondary" id="ipflush">Flush dump</button>
@@ -320,6 +320,35 @@ button.ovitem .depth { color: var(--muted); }
     </div>
     <textarea id="ipreportout" rows="12" readonly placeholder="Report preview…"></textarea>
     <p class="help mono">Cron example: <code>6 6 * * * openusenet inpaths flush --config /etc/openusenet/config.yml</code><br><code>10 6 * * * openusenet inpaths report --config /etc/openusenet/config.yml | mail -s "inpaths $(hostname)" top1000@anthologeek.net</code></p>
+  </section>
+  <section class="panel" id="mailpanel">
+    <h2>Mail server</h2>
+    <p class="help">Outbound SMTP for a Postfix, sendmail, or other traditional mail server. A local relay is usually <span class="mono">127.0.0.1</span> port 25, security plain, with no username. A remote submission port is usually 587 with STARTTLS. The password is not shown again after you save it; leave that field blank to keep the saved one.</p>
+    <p class="mono" id="mailsrc"></p>
+    <div class="grid2">
+      <label>Host <input id="mailhost" placeholder="127.0.0.1" autocomplete="off"></label>
+      <label>Port <input id="mailport" type="number" min="1" max="65535" placeholder="25"></label>
+      <label>Security
+        <select id="mailsec">
+          <option value="auto">Auto (STARTTLS if offered)</option>
+          <option value="starttls">STARTTLS required</option>
+          <option value="plain">Plain (no TLS)</option>
+          <option value="tls">Implicit TLS</option>
+        </select>
+      </label>
+      <label>From <input id="mailfrom" placeholder="news@news.example.org" autocomplete="off"></label>
+      <label>Username <input id="mailuser" placeholder="optional" autocomplete="off"></label>
+      <label>Password <input id="mailpass" type="password" autocomplete="new-password" placeholder="optional"></label>
+    </div>
+    <div class="row">
+      <label class="help"><input type="checkbox" id="mailclear"> Clear saved password</label>
+    </div>
+    <div class="row">
+      <button id="mailsave">Save</button>
+      <input id="mailtestto" placeholder="test recipient" size="28" autocomplete="off">
+      <button class="secondary" id="mailtest">Send test</button>
+      <span class="mono" id="mailmsg"></span>
+    </div>
   </section>
   <div id="peermodal" class="modal hidden">
     <div class="modalbox">
@@ -994,8 +1023,54 @@ $("banadd").onclick = async () => {
 };
 
 async function loadAdmin() {
-  await Promise.all([loadStatus(), loadGroups(), loadArts(), loadUsers(), loadJobs(), loadBans()]);
+  await Promise.all([loadStatus(), loadGroups(), loadArts(), loadUsers(), loadJobs(), loadBans(), loadMail()]);
 }
+
+async function loadMail() {
+  const d = await j("/api/mail");
+  $("mailhost").value = d.host || "";
+  $("mailport").value = d.port || 25;
+  $("mailsec").value = d.security || "auto";
+  $("mailfrom").value = d.from || "";
+  $("mailuser").value = d.username || "";
+  $("mailpass").value = "";
+  $("mailclear").checked = false;
+  $("mailpass").placeholder = d.password_set ? "saved — leave blank to keep" : "optional";
+  if (d.saved) $("mailsrc").textContent = "Stored on this server.";
+  else if (d.host) $("mailsrc").textContent = "From config. Save to store it on this server.";
+  else $("mailsrc").textContent = "Not configured.";
+}
+
+$("mailsave").onclick = async () => {
+  $("mailmsg").textContent = "";
+  try {
+    await j("/api/mail", {
+      method: "PUT", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({
+        host: $("mailhost").value,
+        port: Number($("mailport").value) || 0,
+        security: $("mailsec").value,
+        from: $("mailfrom").value,
+        username: $("mailuser").value,
+        password: $("mailpass").value,
+        clear_password: $("mailclear").checked
+      })
+    });
+    $("mailmsg").textContent = "saved";
+    await loadMail();
+  } catch (e) { $("mailmsg").textContent = e.message; }
+};
+
+$("mailtest").onclick = async () => {
+  $("mailmsg").textContent = "";
+  try {
+    await j("/api/mail/test", {
+      method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({to: $("mailtestto").value})
+    });
+    $("mailmsg").textContent = "test sent";
+  } catch (e) { $("mailmsg").textContent = e.message; }
+};
 // Peers
 let peerEdit = null;
 let peerSnippets = {};

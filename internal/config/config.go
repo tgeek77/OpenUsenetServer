@@ -25,6 +25,7 @@ type Config struct {
 	GroupsSource GroupsSource `yaml:"groups_source"`
 	Inbound      Inbound      `yaml:"inbound"`
 	Inpaths      Inpaths      `yaml:"inpaths"`
+	Mail         Mail         `yaml:"mail"`
 	Cleanfeed    Cleanfeed    `yaml:"cleanfeed"`
 	Control      Control      `yaml:"control"`
 	Archive      Archive      `yaml:"archive"`
@@ -187,6 +188,17 @@ func (c Control) IsEnabled() bool {
 	return *c.Enabled
 }
 
+// Mail is outbound SMTP for a traditional Postfix, sendmail, or submission relay.
+// The admin portal can store an override; this block is the fallback.
+type Mail struct {
+	Host     string `yaml:"host"`
+	Port     int    `yaml:"port"` // 25 plain, 587 STARTTLS, 465 implicit TLS
+	Username string `yaml:"username"`
+	Password string `yaml:"password"`
+	From     string `yaml:"from"`
+	Security string `yaml:"security"` // auto, starttls, plain, tls
+}
+
 // Inpaths controls TOP1000 path statistics (ninpaths-compatible dumps).
 type Inpaths struct {
 	Enabled  bool          `yaml:"enabled"`
@@ -326,7 +338,7 @@ func Load(path string) (Config, error) {
 	if cfg.Limits.ArtCutoffDays < 0 {
 		cfg.Limits.ArtCutoffDays = 0
 	}
-	// RememberRejects defaults true when unset in YAML zero-value... use pointer? 
+	// RememberRejects defaults true when unset in YAML zero-value... use pointer?
 	// Defaults() sets true; YAML false stays false. OK.
 	if cfg.Watchdog.IntervalSeconds <= 0 {
 		cfg.Watchdog.IntervalSeconds = 60
@@ -501,6 +513,26 @@ func applyEnv(cfg *Config) {
 	}
 	if v := os.Getenv("OPENUSENET_INPATHS_ENABLE"); v != "" {
 		cfg.Inpaths.Enabled = v == "1" || strings.EqualFold(v, "true") || strings.EqualFold(v, "yes")
+	}
+	if v := os.Getenv("OPENUSENET_SMTP_HOST"); v != "" {
+		cfg.Mail.Host = v
+	}
+	if v := os.Getenv("OPENUSENET_SMTP_PORT"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			cfg.Mail.Port = n
+		}
+	}
+	if v := os.Getenv("OPENUSENET_SMTP_USER"); v != "" {
+		cfg.Mail.Username = v
+	}
+	if v := os.Getenv("OPENUSENET_SMTP_PASSWORD"); v != "" {
+		cfg.Mail.Password = v
+	}
+	if v := os.Getenv("OPENUSENET_SMTP_FROM"); v != "" {
+		cfg.Mail.From = v
+	}
+	if v := os.Getenv("OPENUSENET_SMTP_SECURITY"); v != "" {
+		cfg.Mail.Security = v
 	}
 }
 

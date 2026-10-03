@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"openusenet/internal/mail"
 	wmat "openusenet/internal/wildmat"
 )
 
@@ -27,25 +28,27 @@ type memArt struct {
 
 // Memory is an in-process store for tests.
 type Memory struct {
-	mu       sync.Mutex
-	groups   map[string]*memGroup
-	arts     map[string]*memArt // msgid
-	byNum    map[string]map[int64]*memArt
-	history  map[string]time.Time
-	users    map[string]*User
-	peers    map[int64]*Peer
-	nextUID  int64
-	nextPID  int64
-	nextAID  int64
-	nextFQID int64
-	subs     map[int64]map[string]time.Time // userID -> group -> subscribed_at
-	reads    map[int64]map[string]int64     // userID -> group -> last_read_num
-	accepts  map[string][]memAccept
-	alerts   []memAlert
-	binQuota map[string]int
-	feedQ    []FeedQueueItem
-	secrets  map[string]string
-	bans     []string
+	mu        sync.Mutex
+	groups    map[string]*memGroup
+	arts      map[string]*memArt // msgid
+	byNum     map[string]map[int64]*memArt
+	history   map[string]time.Time
+	users     map[string]*User
+	peers     map[int64]*Peer
+	nextUID   int64
+	nextPID   int64
+	nextAID   int64
+	nextFQID  int64
+	subs      map[int64]map[string]time.Time // userID -> group -> subscribed_at
+	reads     map[int64]map[string]int64     // userID -> group -> last_read_num
+	accepts   map[string][]memAccept
+	alerts    []memAlert
+	binQuota  map[string]int
+	feedQ     []FeedQueueItem
+	secrets   map[string]string
+	bans      []string
+	mailSaved bool
+	mailSet   mail.Settings
 
 	statGroupDay   map[string]map[string]statGB // day -> group -> counts
 	statGroupTotal map[string]statGB            // group -> counts
@@ -737,6 +740,27 @@ func (m *Memory) GetOrCreateSecret(_ context.Context, name string) (string, erro
 	v := hex.EncodeToString(b[:])
 	m.secrets[name] = v
 	return v, nil
+}
+
+func (m *Memory) GetMailSettings(_ context.Context) (mail.Settings, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if !m.mailSaved {
+		return mail.Settings{}, false, nil
+	}
+	return m.mailSet, true, nil
+}
+
+func (m *Memory) SaveMailSettings(_ context.Context, s mail.Settings) error {
+	s = s.Normalize()
+	if err := s.Validate(); err != nil {
+		return err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.mailSet = s
+	m.mailSaved = true
+	return nil
 }
 
 func (m *Memory) ListGroupBans(_ context.Context) ([]string, error) {

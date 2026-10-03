@@ -1,6 +1,9 @@
 package article
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestPathContains(t *testing.T) {
 	path := "news-b!news-a!not-for-mail"
@@ -43,6 +46,22 @@ func TestInjectForIHave(t *testing.T) {
 	}
 	if err := InjectForIHave(a, InjectOpts{Pathhost: "news-a", Hostname: "news-a"}); err == nil {
 		t.Fatal("expected path loop")
+	}
+}
+
+func TestInjectForPostInjectionDate(t *testing.T) {
+	a, err := Parse([]byte("From: a@b.c\r\nNewsgroups: misc.test\r\nSubject: hi\r\n\r\nbody\r\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 10, 3, 14, 36, 19, 0, time.UTC)
+	if err := InjectForPost(a, InjectOpts{Hostname: "news.example", Pathhost: "news.example", Now: now}); err != nil {
+		t.Fatal(err)
+	}
+	got := a.Get("Injection-Date")
+	want := "Sat, 03 Oct 2026 14:36:19 +0000"
+	if got != want {
+		t.Fatalf("Injection-Date %q, want %q", got, want)
 	}
 }
 
