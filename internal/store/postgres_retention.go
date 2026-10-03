@@ -237,7 +237,9 @@ func (p *Postgres) ResolveGroupAlert(ctx context.Context, id int64, action strin
 	}
 	switch strings.ToLower(strings.TrimSpace(action)) {
 	case "block":
-		if _, err := p.pool.Exec(ctx, `UPDATE newsgroups SET status='n' WHERE name=$1`, group); err != nil {
+		if _, err := p.pool.Exec(ctx, `
+			UPDATE newsgroups SET status='n', retention_days=NULL, retention_mode=$1 WHERE name=$2`,
+			RetentionModeBlocked, group); err != nil {
 			return err
 		}
 		_, err = p.pool.Exec(ctx, `UPDATE group_alerts SET status=$1 WHERE id=$2`, AlertBlocked, id)

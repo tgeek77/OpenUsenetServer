@@ -425,7 +425,14 @@ func (p *Portal) groupBans(w http.ResponseWriter, r *http.Request, _ store.User)
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]string{"ok": strings.TrimSpace(in.Pattern)})
+		res, err := p.purgeUnwanted(r.Context())
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"ok": strings.TrimSpace(in.Pattern), "articles_removed": res.Articles,
+		})
 	case http.MethodDelete:
 		pattern := r.URL.Query().Get("pattern")
 		if err := p.st.DeleteGroupBan(r.Context(), pattern); err != nil {
@@ -572,28 +579,50 @@ func (p *Portal) groups(w http.ResponseWriter, r *http.Request, _ store.User) {
 
 func (p *Portal) articles(w http.ResponseWriter, r *http.Request, _ store.User) {
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	if limit <= 0 || limit > 25 {
+		limit = 25
+	}
 	arts, err := p.st.RecentArticles(r.Context(), limit)
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
 	type row struct {
-		MessageID string `json:"message_id"`
-		Subject   string `json:"subject"`
-		From      string `json:"from"`
-		Date      string `json:"date"`
-		StoredAt  string `json:"stored_at"`
-		Xref      string `json:"xref"`
-		Bytes     int    `json:"bytes"`
+		MessageID  string `json:"message_id"`
+		Subject    string `json:"subject"`
+		From       string `json:"from"`
+		Sender     string `json:"sender"`
+		Newsgroups string `json:"newsgroups"`
+		Date       string `json:"date"`
+		StoredAt   string `json:"stored_at"`
+		Xref       string `json:"xref"`
+		Bytes      int    `json:"bytes"`
 	}
 	out := make([]row, 0, len(arts))
 	for _, a := range arts {
 		out = append(out, row{
-			MessageID: a.MessageID, Subject: a.Subject, From: a.From, Date: a.Date,
+			MessageID: a.MessageID, Subject: a.Subject, From: a.From, Sender: a.From,
+			Newsgroups: groupsFromXref(a.Xref), Date: a.Date,
 			StoredAt: a.StoredAt.UTC().Format(time.RFC3339), Xref: a.Xref, Bytes: a.Bytes,
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"articles": out})
+}
+
+func groupsFromXref(xref string) string {
+	var groups []string
+	for _, field := range strings.Fields(xref) {
+		i := strings.LastIndex(field, ":")
+		if i <= 0 {
+			continue
+		}
+		num := field[i+1:]
+		if num == "" || strings.IndexFunc(num, func(r rune) bool { return r < '0' || r > '9' }) >= 0 {
+			continue
+		}
+		groups = append(groups, field[:i])
+	}
+	return strings.Join(groups, ", ")
 }
 
 func (p *Portal) article(w http.ResponseWriter, r *http.Request, _ store.User) {
@@ -1220,6 +1249,22 @@ func redactURL(s string) string {
 	return scheme + "://" + userinfo + "@" + host
 }
 
+func (p *Portal) purgeUnwanted(ctx context.Context) (store.PurgeResult, error) {
+	res, err := p.st.PurgeUnwantedArticles(ctx)
+	if err != nil {
+		return res, err
+	}
+	if p.mbox != nil {
+		if err := p.mbox.Scrub(res.Groups, res.CrosspostGroups, res.MessageIDs); err != nil && p.log != nil {
+			p.log.Printf("mbox purge: %v", err)
+		}
+	}
+	if res.Articles > 0 && p.log != nil {
+		p.log.Printf("purged %d articles from blocked or ignored groups", res.Articles)
+	}
+	return res, nil
+}
+
 func writeJSON(w http.ResponseWriter, code int, v any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(code)
@@ -1260,7 +1305,16 @@ func (p *Portal) alerts(w http.ResponseWriter, r *http.Request, _ store.User) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+		removed := 0
+		if strings.EqualFold(strings.TrimSpace(in.Action), "block") {
+			res, err := p.purgeUnwanted(r.Context())
+			if err != nil {
+				writeErr(w, err)
+				return
+			}
+			removed = res.Articles
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "articles_removed": removed})
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
 	}

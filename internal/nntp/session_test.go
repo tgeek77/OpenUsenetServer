@@ -398,15 +398,12 @@ func TestIHaveBannedGroup(t *testing.T) {
 		"yes\r\n" +
 		".\r\n"
 	_, _ = c.Write([]byte(art2))
-	if l := readLine(t, r); !strings.HasPrefix(l, "235 ") {
-		t.Fatalf("ihave ok %q", l)
+	if l := readLine(t, r); !strings.HasPrefix(l, "437 ") {
+		t.Fatalf("crosspost should be rejected, got %q", l)
 	}
-	got, err := st.GetByMsgID(context.Background(), msgid2)
-	if err != nil || got == nil || !strings.Contains(got.Headers, "Newsgroups: alt.test") {
-		t.Fatalf("headers %v %v", got, err)
-	}
-	if strings.Contains(got.Headers, "local.test") {
-		t.Fatalf("banned group still filed: %s", got.Headers)
+	n, err = st.CountArticles(context.Background())
+	if err != nil || n != 0 {
+		t.Fatalf("crosspost stored %d %v", n, err)
 	}
 }
 

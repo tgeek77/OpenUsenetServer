@@ -4,30 +4,96 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>OpenUsenet</title>
+<script>
+try {
+  var savedTheme = localStorage.getItem("ous-theme");
+  if (savedTheme) document.documentElement.dataset.theme = savedTheme;
+} catch (e) {}
+</script>
 <style>
 :root {
-  --bg: #12141a; --panel: #1b1f2a; --ink: #f4f6f8; --muted: #d0d7e2;
-  --line: #3a4458; --accent: #e4c98a; --warn: #ffb020; --bad: #ff6b6b; --ok: #8ee7b0;
-  --unread: #fff6d0;
+  color-scheme: dark;
+  --font: "IBM Plex Sans", "Segoe UI", sans-serif;
+  --bg: #12141a; --header: #12141a; --panel: #1b1f2a; --field: #10131a; --compose: #161922;
+  --ink: #f4f6f8; --muted: #d0d7e2; --line: #3a4458; --hover: #252a38;
+  --accent: #e4c98a; --on-accent: #12141a; --link: #e4c98a;
+  --warn: #ffb020; --warn-bg: #3a2a12; --warn-line: #5a4018;
+  --bad: #ff6b6b; --ok: #8ee7b0; --unread: #fff6d0; --pie-empty: #2a3140;
+}
+[data-theme="yaru"] {
+  color-scheme: light;
+  --font: Ubuntu, "Noto Sans", "Segoe UI", sans-serif;
+  --bg: #fafafa; --header: #ffffff; --panel: #ffffff; --field: #ffffff; --compose: #f7f7f7;
+  --ink: #3d3d3d; --muted: #5d5d5d; --line: #c7c7c7; --hover: #f2f2f2;
+  --accent: #e95420; --on-accent: #ffffff; --link: #c34113;
+  --warn: #9a5b00; --warn-bg: #fff4e5; --warn-line: #f0c48a;
+  --bad: #c7162b; --ok: #0e8420; --unread: #e95420; --pie-empty: #e6e6e6;
+}
+[data-theme="yaru-dark"] {
+  color-scheme: dark;
+  --font: Ubuntu, "Noto Sans", "Segoe UI", sans-serif;
+  --bg: #2c2c2c; --header: #252525; --panel: #333333; --field: #272727; --compose: #242424;
+  --ink: #f7f7f7; --muted: #aea79f; --line: #1b1b1b; --hover: #3d3d3d;
+  --accent: #e95420; --on-accent: #ffffff; --link: #ff8a62;
+  --warn: #f99b11; --warn-bg: #3a2a12; --warn-line: #6a4a18;
+  --bad: #e01b24; --ok: #3cb54a; --unread: #ff8a62; --pie-empty: #1b1b1b;
+}
+[data-theme="adwaita"] {
+  color-scheme: light;
+  --font: Cantarell, "Adwaita Sans", "Noto Sans", sans-serif;
+  --bg: #fafafb; --header: #ffffff; --panel: #ffffff; --field: #ffffff; --compose: #f3f3f5;
+  --ink: #1c1c1e; --muted: #5e5e64; --line: #d9d9de; --hover: #ebebed;
+  --accent: #3584e4; --on-accent: #ffffff; --link: #1a5fb4;
+  --warn: #9a6b00; --warn-bg: #fff8e5; --warn-line: #e6d3a1;
+  --bad: #e01b24; --ok: #26a269; --unread: #1a5fb4; --pie-empty: #ebebed;
+}
+[data-theme="adwaita-dark"] {
+  color-scheme: dark;
+  --font: Cantarell, "Adwaita Sans", "Noto Sans", sans-serif;
+  --bg: #222226; --header: #2e2e32; --panel: #2e2e32; --field: #1d1d20; --compose: #28282c;
+  --ink: #ffffff; --muted: #c0c0c8; --line: #3d3d44; --hover: #3a3a40;
+  --accent: #3584e4; --on-accent: #ffffff; --link: #78aeed;
+  --warn: #f8c000; --warn-bg: #3a3218; --warn-line: #6a5a20;
+  --bad: #ff6b6b; --ok: #33d17a; --unread: #78aeed; --pie-empty: #1d1d20;
+}
+[data-theme="breeze"] {
+  color-scheme: light;
+  --font: "Noto Sans", "Oxygen-Sans", "Segoe UI", sans-serif;
+  --bg: #eff0f1; --header: #fcfcfc; --panel: #fcfcfc; --field: #ffffff; --compose: #eff0f1;
+  --ink: #232627; --muted: #5c6466; --line: #bdc3c7; --hover: #e3e6e8;
+  --accent: #3daee9; --on-accent: #ffffff; --link: #1d6fa5;
+  --warn: #9a6b00; --warn-bg: #fff6e0; --warn-line: #e6d09a;
+  --bad: #da4453; --ok: #27ae60; --unread: #1d6fa5; --pie-empty: #e3e6e8;
+}
+[data-theme="breeze-dark"] {
+  color-scheme: dark;
+  --font: "Noto Sans", "Oxygen-Sans", "Segoe UI", sans-serif;
+  --bg: #232629; --header: #31363b; --panel: #31363b; --field: #1b1e20; --compose: #2a2e32;
+  --ink: #fcfcfc; --muted: #bdc3c7; --line: #4d5458; --hover: #3b4045;
+  --accent: #3daee9; --on-accent: #ffffff; --link: #3daee9;
+  --warn: #f67400; --warn-bg: #3a2e1c; --warn-line: #6a4e28;
+  --bad: #ed1515; --ok: #11d116; --unread: #3daee9; --pie-empty: #1b1e20;
 }
 * { box-sizing: border-box; }
-body { margin: 0; font: 15px/1.45 "IBM Plex Sans", "Segoe UI", sans-serif; background: var(--bg); color: var(--ink); height: 100vh; display: flex; flex-direction: column; }
-header { padding: 0.75rem 1.25rem; border-bottom: 1px solid var(--line); display: flex; flex-wrap: wrap; gap: 0.75rem; justify-content: space-between; align-items: center; flex-shrink: 0; }
+body { margin: 0; font: 15px/1.45 var(--font); background: var(--bg); color: var(--ink); height: 100vh; display: flex; flex-direction: column; }
+a { color: var(--link); }
+header { padding: 0.75rem 1.25rem; background: var(--header); border-bottom: 1px solid var(--line); display: flex; flex-wrap: wrap; gap: 0.75rem; justify-content: space-between; align-items: center; flex-shrink: 0; }
 header h1 { margin: 0; font-size: 1.1rem; letter-spacing: 0.04em; }
 header .meta { color: var(--muted); font-size: 0.85rem; }
 .nav btn, .nav button, button.navbtn {
   background: transparent; color: var(--ink); border: 1px solid var(--line); padding: 0.35rem 0.7rem; cursor: pointer; font: inherit;
 }
-.navbtn.active { background: var(--accent); color: #12141a; border-color: var(--accent); font-weight: 600; }
-.warn { margin: 0.5rem 1.25rem 0; padding: 0.4rem 0.7rem; background: #3a2a12; color: var(--warn); border: 1px solid #5a4018; font-size: 0.85rem; }
+.navbtn.active { background: var(--accent); color: var(--on-accent); border-color: var(--accent); font-weight: 600; }
+.theme-pick { color: var(--muted); font-size: 0.85rem; display: flex; align-items: center; gap: 0.35rem; margin: 0; }
+.warn { margin: 0.5rem 1.25rem 0; padding: 0.4rem 0.7rem; background: var(--warn-bg); color: var(--warn); border: 1px solid var(--warn-line); font-size: 0.85rem; }
 #authbox { max-width: 28rem; margin: 2rem auto; background: var(--panel); border: 1px solid var(--line); padding: 1.25rem; }
 #authbox h2 { margin-top: 0; }
 .row { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin-bottom: 0.5rem; }
 input, select, button, textarea {
-  font: inherit; background: #10131a; color: var(--ink); border: 1px solid var(--line); padding: 0.35rem 0.55rem;
+  font: inherit; background: var(--field); color: var(--ink); border: 1px solid var(--line); padding: 0.35rem 0.55rem;
 }
 textarea { width: 100%; min-height: 8rem; font-family: ui-monospace, monospace; font-size: 0.82rem; }
-button.primary, button:not(.secondary):not(.navbtn):not(.ovitem):not(.subitem) { background: var(--accent); color: #12141a; border: 0; font-weight: 600; cursor: pointer; }
+button.primary, button:not(.secondary):not(.navbtn):not(.ovitem):not(.subitem) { background: var(--accent); color: var(--on-accent); border: 0; font-weight: 600; cursor: pointer; }
 button.secondary { background: transparent; color: var(--ink); border: 1px solid var(--line); cursor: pointer; }
 .hidden { display: none !important; }
 .help { color: var(--muted); font-size: 0.85rem; margin: 0 0 0.75rem; }
@@ -43,7 +109,9 @@ th { color: var(--muted); font-weight: 500; }
 .card .l { color: var(--muted); font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; }
 section.panel { background: var(--panel); border: 1px solid var(--line); padding: 0.85rem; margin-bottom: 1rem; }
 section.panel h2 { margin: 0 0 0.6rem; font-size: 1rem; }
-#admin, #ops, #stats { padding: 1rem 1.25rem 2rem; overflow: auto; flex: 1; }
+#admin, #ops, #stats, #settings { padding: 1rem 1.25rem 2rem; overflow: auto; flex: 1; }
+.scrollbox { max-height: calc(2.4rem * 25); overflow: auto; }
+.scrollbox thead th { position: sticky; top: 0; background: var(--panel); z-index: 1; }
 #reader { flex: 1; min-height: 0; display: grid; grid-template-columns: 220px 1fr 1.2fr; gap: 0; }
 @media (max-width: 960px) {
   #reader { grid-template-columns: 1fr; grid-template-rows: auto 40vh 1fr; }
@@ -55,14 +123,14 @@ button.subitem, button.ovitem {
   display: block; width: 100%; text-align: left; background: transparent; color: var(--ink); border: 0; border-bottom: 1px solid var(--line);
   padding: 0.55rem 0.75rem; cursor: pointer; font: inherit; font-weight: 400;
 }
-button.subitem:hover, button.ovitem:hover, button.subitem.active, button.ovitem.active { background: #252a38; color: var(--ink); }
+button.subitem:hover, button.ovitem:hover, button.subitem.active, button.ovitem.active { background: var(--hover); color: var(--ink); }
 button.subitem .u { color: var(--accent); font-size: 0.75rem; float: right; }
 button.ovitem.unread { color: var(--unread); font-weight: 600; }
 button.ovitem .depth { color: var(--muted); }
 #artview { padding: 0.75rem; display: flex; flex-direction: column; gap: 0.5rem; height: 100%; }
 #artmeta { color: var(--muted); font-size: 0.82rem; }
-#artbody { flex: 1; overflow: auto; white-space: pre-wrap; background: #10131a; border: 1px solid var(--line); padding: 0.75rem; margin: 0; font-family: ui-monospace, monospace; font-size: 0.82rem; }
-#compose { border-top: 1px solid var(--line); padding: 0.75rem; background: #161922; }
+#artbody { flex: 1; overflow: auto; white-space: pre-wrap; background: var(--field); border: 1px solid var(--line); padding: 0.75rem; margin: 0; font-family: ui-monospace, monospace; font-size: 0.82rem; }
+#compose { border-top: 1px solid var(--line); padding: 0.75rem; background: var(--compose); }
 .toolbar { padding: 0.45rem 0.75rem; border-bottom: 1px solid var(--line); display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; }
 .modal { position: fixed; inset: 0; background: rgba(0,0,0,0.55); display: flex; align-items: flex-start; justify-content: center; padding: 2rem 1rem; overflow: auto; z-index: 20; }
 .modalbox { width: min(920px, 100%); background: var(--panel); border: 1px solid var(--line); padding: 1rem 1.1rem 1.25rem; }
@@ -77,7 +145,7 @@ button.ovitem .depth { color: var(--muted); }
 .piebox { display: flex; flex-direction: column; align-items: center; gap: 0.5rem; }
 .piebox svg { width: 220px; height: 220px; }
 .pielabel { font-size: 0.78rem; color: var(--muted); max-width: 220px; }
-.togglebtn.active { background: var(--accent); color: #12141a; border-color: var(--accent); font-weight: 600; }
+.togglebtn.active { background: var(--accent); color: var(--on-accent); border-color: var(--accent); font-weight: 600; }
 </style>
 </head>
 <body>
@@ -87,7 +155,20 @@ button.ovitem .depth { color: var(--muted); }
     <div class="meta" id="sub">portal</div>
   </div>
   <div class="row nav" id="nav"></div>
-  <div class="row" id="userbar"></div>
+  <div class="row">
+    <label class="theme-pick">Theme
+      <select id="theme" aria-label="Theme">
+        <option value="openusenet">OpenUsenet</option>
+        <option value="yaru">Yaru</option>
+        <option value="yaru-dark">Yaru Dark</option>
+        <option value="adwaita">Adwaita</option>
+        <option value="adwaita-dark">Adwaita Dark</option>
+        <option value="breeze">Breeze</option>
+        <option value="breeze-dark">Breeze Dark</option>
+      </select>
+    </label>
+    <div class="row" id="userbar"></div>
+  </div>
 </header>
 <div id="authbox" class="hidden"></div>
 <div id="reader" class="hidden">
@@ -197,10 +278,12 @@ button.ovitem .depth { color: var(--muted); }
     <p class="mono" id="opswatch"></p>
     <p class="mono" id="opsfeed"></p>
     <p class="mono" id="opsexpirstat"></p>
+    <div class="scrollbox">
     <table>
       <thead><tr><th>Peer</th><th>Host</th><th>Patterns</th><th>Queue</th><th>Ping</th><th></th></tr></thead>
       <tbody id="opspeers"></tbody>
     </table>
+    </div>
   </section>
   <section class="panel">
     <h2>Maintenance</h2>
@@ -238,10 +321,12 @@ button.ovitem .depth { color: var(--muted); }
       <button class="secondary togglebtn" data-top="100" id="stop100">Top 100</button>
     </div>
     <div class="statgrid">
+      <div class="scrollbox">
       <table>
         <thead><tr><th>#</th><th>Group</th><th>Articles</th></tr></thead>
         <tbody id="statgroups"></tbody>
       </table>
+      </div>
       <div class="piebox">
         <div id="statpie"></div>
         <div class="pielabel" id="statpielabel">Top 10 share</div>
@@ -251,24 +336,51 @@ button.ovitem .depth { color: var(--muted); }
   <div class="statgrid">
     <section class="panel">
       <h2>Top 10 posters (today)</h2>
-      <table><thead><tr><th>From</th><th>N</th></tr></thead><tbody id="statpostersday"></tbody></table>
+      <div class="scrollbox"><table><thead><tr><th>From</th><th>N</th></tr></thead><tbody id="statpostersday"></tbody></table></div>
     </section>
     <section class="panel">
       <h2>Top 10 posters (all-time)</h2>
-      <table><thead><tr><th>From</th><th>N</th></tr></thead><tbody id="statposterstot"></tbody></table>
+      <div class="scrollbox"><table><thead><tr><th>From</th><th>N</th></tr></thead><tbody id="statposterstot"></tbody></table></div>
     </section>
   </div>
   <div class="statgrid">
     <section class="panel">
       <h2>Top 10 Path providers (today)</h2>
       <p class="help">Bang-path hops excluding this server and not-for-mail.</p>
-      <table><thead><tr><th>Site</th><th>N</th></tr></thead><tbody id="statprovday"></tbody></table>
+      <div class="scrollbox"><table><thead><tr><th>Site</th><th>N</th></tr></thead><tbody id="statprovday"></tbody></table></div>
     </section>
     <section class="panel">
       <h2>Top 10 Path providers (all-time)</h2>
-      <table><thead><tr><th>Site</th><th>N</th></tr></thead><tbody id="statprovtot"></tbody></table>
+      <div class="scrollbox"><table><thead><tr><th>Site</th><th>N</th></tr></thead><tbody id="statprovtot"></tbody></table></div>
     </section>
   </div>
+  <section class="panel">
+    <h2>Group search</h2>
+    <p class="help">Find a newsgroup by name. The full group list is not loaded here.</p>
+    <div class="row">
+      <input id="agq" placeholder="search name…" size="24">
+      <label><input type="checkbox" id="busy" checked> with articles</label>
+      <button class="secondary" id="gsearch">Search</button>
+    </div>
+    <p class="mono" id="gsmsg"></p>
+    <div class="scrollbox">
+      <table>
+        <thead><tr><th>Name</th><th>Status</th><th>Count</th><th>Description</th></tr></thead>
+        <tbody id="groups"></tbody>
+      </table>
+    </div>
+  </section>
+  <section class="panel">
+    <h2>Recent articles</h2>
+    <p class="help">The last 25 articles stored on this server.</p>
+    <div class="scrollbox">
+      <table>
+        <thead><tr><th>When</th><th>Newsgroup</th><th>Sender</th><th>Message-ID</th><th>Subject</th></tr></thead>
+        <tbody id="arts"></tbody>
+      </table>
+    </div>
+    <pre id="art" class="mono" hidden></pre>
+  </section>
 </main>
 <main id="admin" class="hidden">
   <div class="cards" id="cards"></div>
@@ -276,7 +388,7 @@ button.ovitem .depth { color: var(--muted); }
     <h2>Peers</h2>
     <p class="help">Peering is bidirectional: you configure each remote on <strong>our</strong> server (below), and send them INN snippets for <strong>their</strong> server when they agree to carry your feed. See <a href="https://eternal-september.org/index.php?showpage=peering" target="_blank" rel="noopener">Eternal September peering</a> for the three-file model.</p>
     <div id="inboundwarn" class="warn hidden"></div>
-    <details class="panel" style="margin-bottom:1rem;padding:0.75rem 1rem;border:1px solid var(--border);border-radius:6px">
+    <details class="panel" style="margin-bottom:1rem;padding:0.75rem 1rem;border:1px solid var(--line);border-radius:6px">
       <summary style="cursor:pointer;font-weight:600">Give to an INN peer (our side)</summary>
       <p class="help">Send these three snippets to the remote admin. They paste them into <code>incoming.conf</code>, <code>innfeed.conf</code>, and <code>newsfeeds</code> on <em>their</em> INN box, then add you as a peer the same way you would any other site.</p>
       <div class="grid2">
@@ -302,10 +414,12 @@ button.ovitem .depth { color: var(--muted); }
       <button id="pnew">Add peer…</button>
       <span class="mono" id="plistmsg"></span>
     </div>
+    <div class="scrollbox">
     <table>
       <thead><tr><th>Status</th><th>Name</th><th>Outgoing</th><th>Port</th><th>Incoming host</th><th>Auth</th><th></th></tr></thead>
       <tbody id="peers"></tbody>
     </table>
+    </div>
     <p class="mono" id="feed"></p>
   </section>
   <section class="panel" id="top1000panel">
@@ -359,10 +473,12 @@ button.ovitem .depth { color: var(--muted); }
       <button id="modadd">Add</button>
     </div>
     <p class="mono" id="modmsg"></p>
+    <div class="scrollbox">
     <table>
       <thead><tr><th>Pattern</th><th>Address</th><th></th></tr></thead>
       <tbody id="modrules"></tbody>
     </table>
+    </div>
   </section>
   <div id="peermodal" class="modal hidden">
     <div class="modalbox">
@@ -407,11 +523,13 @@ button.ovitem .depth { color: var(--muted); }
   </div>
   <section class="panel">
     <h2>Binary flood alerts <span id="alertbadge" class="mono"></span></h2>
-    <p class="help">Groups flooded with binary-looking traffic get a 7-day retention quota. Review to block, whitelist, or dismiss. Text groups stay forever by default. Authenticated users are limited to 25 binary POSTs/day.</p>
+    <p class="help">Groups flooded with binary-looking traffic get a 7-day retention quota. Block deletes that group's articles, including crossposts, and refuses new ones. Whitelist or dismiss leaves the articles in place. Text groups stay forever by default. Authenticated users are limited to 25 binary POSTs/day.</p>
+    <div class="scrollbox">
     <table>
       <thead><tr><th>When</th><th>Group</th><th>Detail</th><th></th></tr></thead>
       <tbody id="alerts"></tbody>
     </table>
+    </div>
   </section>
   <section class="panel">
     <h2>Users</h2>
@@ -423,10 +541,12 @@ button.ovitem .depth { color: var(--muted); }
       <button id="uadd">Add user</button>
       <span class="mono" id="umsg"></span>
     </div>
+    <div class="scrollbox">
     <table>
       <thead><tr><th>Username</th><th>Role</th><th>Post</th><th>Disabled</th><th></th></tr></thead>
       <tbody id="users"></tbody>
     </table>
+    </div>
   </section>
   <section class="panel">
     <h2>Archive export</h2>
@@ -448,31 +568,31 @@ button.ovitem .depth { color: var(--muted); }
       <button id="aimport">Import</button>
       <span class="mono" id="aimsg"></span>
     </div>
+    <div class="scrollbox">
     <table>
       <thead><tr><th>ID</th><th>Kind</th><th>Status</th><th>Selector / files</th><th>Dir / error</th><th>Groups</th><th>Articles</th></tr></thead>
       <tbody id="ajobs"></tbody>
     </table>
+    </div>
   </section>
   <section class="panel">
     <h2>Ignored newsgroups</h2>
-    <p class="help">Articles in these groups are dropped on arrival. Wildmat patterns are allowed, for example <span class="mono">alt.binaries.*</span>. A crosspost is still filed in any group that is not ignored.</p>
+    <p class="help">Articles in these groups are deleted, including crossposts, and new copies are refused. Wildmat patterns are allowed, for example <span class="mono">alt.binaries.*</span>. The message body is not kept.</p>
     <div class="row">
       <input id="banpat" placeholder="alt.binaries.*" size="28">
       <button id="banadd">Ignore</button>
     </div>
     <p class="mono" id="banmsg"></p>
+    <div class="scrollbox">
     <table>
       <thead><tr><th>Pattern</th><th></th></tr></thead>
       <tbody id="bans"></tbody>
     </table>
+    </div>
   </section>
   <section class="panel">
     <h2>Groups</h2>
-    <div class="row">
-      <input id="agq" placeholder="search name…" size="24">
-      <label><input type="checkbox" id="busy" checked> with articles</label>
-      <button class="secondary" id="gsearch">Search</button>
-    </div>
+    <p class="help">Add a local group or refresh the ISC list. Search is on Stats.</p>
     <div class="row">
       <input id="gname" placeholder="new group name" size="22">
       <input id="gdesc" placeholder="description" size="28">
@@ -481,22 +601,19 @@ button.ovitem .depth { color: var(--muted); }
       <button class="secondary" id="isc">Pull ISC list</button>
     </div>
     <p class="mono" id="gmsg"></p>
-    <table>
-      <thead><tr><th>Name</th><th>Status</th><th>Retention</th><th>Count</th><th>High</th><th>Description</th></tr></thead>
-      <tbody id="groups"></tbody>
-    </table>
-  </section>
-  <section class="panel">
-    <h2>Recent articles</h2>
-    <table>
-      <thead><tr><th>When</th><th>Message-ID</th><th>From</th><th>Subject</th></tr></thead>
-      <tbody id="arts"></tbody>
-    </table>
-    <pre id="art" class="mono" hidden></pre>
   </section>
 </main>
 <script>
 const $ = (id) => document.getElementById(id);
+const themeNames = ["openusenet","yaru","yaru-dark","adwaita","adwaita-dark","breeze","breeze-dark"];
+function applyTheme(name) {
+  if (!themeNames.includes(name)) name = "openusenet";
+  document.documentElement.dataset.theme = name;
+  try { localStorage.setItem("ous-theme", name); } catch (e) {}
+  if ($("theme")) $("theme").value = name;
+}
+applyTheme(document.documentElement.dataset.theme || "openusenet");
+$("theme").onchange = () => applyTheme($("theme").value);
 let me = null, curGroup = null, curNum = 0, curArt = null, overview = [], lastReadNum = 0, replyTo = null;
 
 async function j(url, opt) {
@@ -907,7 +1024,7 @@ async function loadOps() {
 function pieSVG(rows) {
   const colors = ["#c4f542","#6ee7a8","#7dd3fc","#c4b5fd","#f9a8d4","#fcd34d","#fb923c","#f87171","#a3e635","#67e8f9"];
   const total = rows.reduce((a,r) => a + (r.count||0), 0);
-  if (!total) return `<svg viewBox="0 0 100 100"><circle cx="50" cy="50" r="40" fill="#2a3140"/></svg>`;
+  if (!total) return `<svg viewBox="0 0 100 100"><circle cx="50" cy="50" r="40" fill="var(--pie-empty)"/></svg>`;
   let ang = -Math.PI/2, parts = "";
   rows.slice(0,10).forEach((r,i) => {
     const slice = 2*Math.PI * ((r.count||0)/total);
@@ -955,6 +1072,7 @@ async function loadStats() {
   document.querySelectorAll("#stats [data-period]").forEach(b => b.classList.toggle("active", b.dataset.period === statsPeriod));
   document.querySelectorAll("#stats [data-top]").forEach(b => b.classList.toggle("active", b.dataset.top === statsTop));
   renderContentStats();
+  await loadArts();
 }
 $("stats").onclick = (e) => {
   const b = e.target.closest("button[data-period],button[data-top]");
@@ -1031,18 +1149,18 @@ $("bans").onclick = async (e) => {
 };
 $("banadd").onclick = async () => {
   try {
-    await j("/api/group-bans", {
+    const d = await j("/api/group-bans", {
       method:"POST", headers:{"Content-Type":"application/json"},
       body: JSON.stringify({pattern:$("banpat").value})
     });
     $("banpat").value = "";
-    $("banmsg").textContent = "ignored";
+    $("banmsg").textContent = d.articles_removed ? ("ignored, removed " + d.articles_removed + " articles") : "ignored";
     await loadBans();
   } catch (e) { $("banmsg").textContent = e.message; }
 };
 
 async function loadAdmin() {
-  await Promise.all([loadStatus(), loadGroups(), loadArts(), loadUsers(), loadJobs(), loadBans(), loadMail(), loadModerators()]);
+  await Promise.all([loadStatus(), loadUsers(), loadJobs(), loadBans(), loadMail(), loadModerators()]);
 }
 
 async function loadModerators() {
@@ -1388,30 +1506,30 @@ async function loadAlerts() {
       if (!b) return;
       await j("/api/alerts", {method:"POST", headers:{"Content-Type":"application/json"},
         body: JSON.stringify({id: Number(b.dataset.aid), action: b.dataset.act})});
-      await loadStatus(); await loadGroups();
+      await loadStatus();
     };
   } catch (e) {
     $("alerts").innerHTML = `<tr><td colspan="4">${esc(e.message)}</td></tr>`;
   }
 }
-function retentionLabel(g) {
-  if (g.retention_mode === "whitelist") return "whitelisted";
-  if (g.retention_days != null && g.retention_days > 0) return g.retention_days + "d " + (g.retention_mode||"auto");
-  return "forever";
-}
 async function loadGroups() {
   const q = encodeURIComponent($("agq").value);
   const busy = $("busy").checked ? "1" : "0";
-  const d = await j("/api/groups?q="+q+"&busy="+busy);
-  $("groups").innerHTML = (d.groups||[]).map(g =>
-    `<tr><td class="mono">${esc(g.name)}</td><td>${esc(g.status)}</td><td>${esc(retentionLabel(g))}</td><td>${esc(g.count)}</td><td>${esc(g.high)}</td><td>${esc(g.description)}</td></tr>`
-  ).join("") || `<tr><td colspan="6">No groups match</td></tr>`;
+  $("gsmsg").textContent = "";
+  try {
+    const d = await j("/api/reader/groups?q="+q+"&busy="+busy+"&limit=200");
+    const rows = d.groups || [];
+    $("groups").innerHTML = rows.map(g =>
+      `<tr><td class="mono">${esc(g.name)}</td><td>${esc(g.status)}</td><td>${esc(g.count)}</td><td>${esc(g.description)}</td></tr>`
+    ).join("") || `<tr><td colspan="4">No groups match</td></tr>`;
+    $("gsmsg").textContent = rows.length + (rows.length === 1 ? " group" : " groups");
+  } catch (e) { $("gsmsg").textContent = e.message; }
 }
 async function loadArts() {
-  const d = await j("/api/articles");
+  const d = await j("/api/articles?limit=25");
   $("arts").innerHTML = (d.articles||[]).map(a =>
-    `<tr data-id="${esc(a.message_id)}"><td class="mono">${esc(a.stored_at)}</td><td class="mono">${esc(a.message_id)}</td><td>${esc(a.from)}</td><td>${esc(a.subject)}</td></tr>`
-  ).join("") || `<tr><td colspan="4">No articles</td></tr>`;
+    `<tr data-id="${esc(a.message_id)}"><td class="mono">${esc(a.stored_at)}</td><td class="mono">${esc(a.newsgroups)}</td><td>${esc(a.sender)}</td><td class="mono">${esc(a.message_id)}</td><td>${esc(a.subject)}</td></tr>`
+  ).join("") || `<tr><td colspan="5">No articles</td></tr>`;
 }
 async function loadUsers() {
   const d = await j("/api/users");
@@ -1439,13 +1557,14 @@ async function loadJobs() {
   }).join("") || `<tr><td colspan="7">No archive jobs</td></tr>`;
 }
 $("gsearch").onclick = loadGroups;
+$("agq").addEventListener("keydown", (e) => { if (e.key === "Enter") loadGroups(); });
 $("gadd").onclick = async () => {
   try {
     await j("/api/groups", {method:"POST", headers:{"Content-Type":"application/json"}, body: JSON.stringify({
       name: $("gname").value, description: $("gdesc").value, status: $("gstat").value
     })});
     $("gmsg").textContent = "added";
-    await loadGroups(); await loadStatus();
+    await loadStatus();
   } catch (e) { $("gmsg").textContent = e.message; }
 };
 $("isc").onclick = async () => {
@@ -1453,7 +1572,7 @@ $("isc").onclick = async () => {
   try {
     const d = await j("/api/isc", {method:"POST"});
     $("gmsg").textContent = "loaded " + d.loaded;
-    await loadStatus(); await loadGroups();
+    await loadStatus();
   } catch (e) { $("gmsg").textContent = e.message; }
 };
 $("uadd").onclick = async () => {
@@ -1499,7 +1618,7 @@ $("aimport").onclick = async () => {
         $("aimsg").textContent = job.status === "done"
           ? `done imported=${job.imported||0} duplicates=${job.duplicates||0} skipped=${job.skipped||0}`
           : (job.error || job.status);
-        await loadGroups(); await loadArts(); await loadStatus();
+        await loadArts(); await loadStatus();
       }
     };
     setTimeout(() => poll(40), 400);

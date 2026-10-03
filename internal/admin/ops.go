@@ -57,6 +57,10 @@ func (p *Portal) opsAPI(w http.ResponseWriter, r *http.Request, _ store.User) {
 			}
 			p.ops.SetWatchdogEnabled(en)
 		case "expire":
+			if _, err := p.purgeUnwanted(ctx); err != nil {
+				writeErr(w, err)
+				return
+			}
 			res, err := p.st.Expire(ctx, p.cfg.Retention.HistoryDays)
 			if err != nil {
 				writeErr(w, err)

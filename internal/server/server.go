@@ -70,6 +70,9 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 	if err := BootstrapAdmin(ctx, s.st, s.log); err != nil {
 		return err
 	}
+	if err := s.purgeUnwanted(ctx); err != nil {
+		return err
+	}
 	go s.runArchiveSchedule(ctx)
 	go s.runInpathsSchedule(ctx)
 	go s.runExpireSchedule(ctx)
@@ -300,12 +303,31 @@ func (s *Server) runInpathsSchedule(ctx context.Context) {
 	}
 }
 
+func (s *Server) purgeUnwanted(ctx context.Context) error {
+	res, err := s.st.PurgeUnwantedArticles(ctx)
+	if err != nil {
+		return fmt.Errorf("purge unwanted: %w", err)
+	}
+	if s.mbox != nil {
+		if err := s.mbox.Scrub(res.Groups, res.CrosspostGroups, res.MessageIDs); err != nil {
+			s.log.Printf("mbox purge: %v", err)
+		}
+	}
+	if res.Articles > 0 {
+		s.log.Printf("purged %d articles from blocked or ignored groups", res.Articles)
+	}
+	return nil
+}
+
 func (s *Server) runExpireSchedule(ctx context.Context) {
 	every := time.Hour
 	s.log.Printf("retention expire schedule every %s (history_days=%d)", every, s.cfg.Retention.HistoryDays)
 	t := time.NewTicker(every)
 	defer t.Stop()
 	run := func() {
+		if err := s.purgeUnwanted(ctx); err != nil {
+			s.log.Printf("purge unwanted: %v", err)
+		}
 		res, err := s.st.Expire(ctx, s.cfg.Retention.HistoryDays)
 		if err != nil {
 			s.log.Printf("expire: %v", err)

@@ -1007,10 +1007,18 @@ func (m *Memory) RememberMessageID(_ context.Context, msgid string) error {
 func (m *Memory) CancelMessageID(_ context.Context, msgid string) (bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.history == nil {
+		m.history = map[string]time.Time{}
+	}
 	m.history[msgid] = time.Now()
+	return m.deleteArticleLocked(msgid), nil
+}
+
+// deleteArticleLocked removes a stored article from every group. History is left in place.
+func (m *Memory) deleteArticleLocked(msgid string) bool {
 	art, ok := m.arts[msgid]
 	if !ok {
-		return false, nil
+		return false
 	}
 	for g, n := range art.groups {
 		delete(m.byNum[g], n)
@@ -1046,7 +1054,7 @@ func (m *Memory) CancelMessageID(_ context.Context, msgid string) (bool, error) 
 		}
 	}
 	m.feedQ = kept
-	return true, nil
+	return true
 }
 
 func (m *Memory) DeleteGroup(_ context.Context, name string) error {

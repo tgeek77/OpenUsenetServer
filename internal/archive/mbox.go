@@ -74,6 +74,90 @@ func (m *MBox) Append(group string, a *article.Article) (offset, length int64, e
 	return offset, int64(n), nil
 }
 
+// Scrub deletes mbox files for dropped groups and rewrites other group files
+// so a removed article's body is not left on disk.
+func (m *MBox) Scrub(dropGroups, rewriteGroups, messageIDs []string) error {
+	if m == nil || m.root == "" {
+		return nil
+	}
+	if len(dropGroups) == 0 && len(messageIDs) == 0 {
+		return nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, g := range dropGroups {
+		if err := os.Remove(m.pathFor(g)); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
+	if len(messageIDs) == 0 {
+		return nil
+	}
+	drop := make(map[string]struct{}, len(messageIDs))
+	for _, id := range messageIDs {
+		drop[id] = struct{}{}
+	}
+	for _, g := range rewriteGroups {
+		if err := rewriteMbox(m.pathFor(g), drop); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func rewriteMbox(path string, drop map[string]struct{}) error {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	var cur strings.Builder
+	var kept []string
+	flush := func() {
+		msg := cur.String()
+		cur.Reset()
+		if msg == "" || messageDropped(msg, drop) {
+			return
+		}
+		kept = append(kept, msg)
+	}
+	for _, line := range strings.SplitAfter(string(b), "\n") {
+		if strings.HasPrefix(line, "From ") && cur.Len() > 0 {
+			flush()
+		}
+		cur.WriteString(line)
+	}
+	flush()
+	var out strings.Builder
+	for _, msg := range kept {
+		out.WriteString(msg)
+		if !strings.HasSuffix(msg, "\n") {
+			out.WriteByte('\n')
+		}
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, []byte(out.String()), 0o644); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
+}
+
+func messageDropped(msg string, drop map[string]struct{}) bool {
+	for _, line := range strings.Split(msg, "\n") {
+		lower := strings.ToLower(line)
+		if !strings.HasPrefix(lower, "message-id:") {
+			continue
+		}
+		id := strings.TrimSpace(line[len("message-id:"):])
+		if _, ok := drop[id]; ok {
+			return true
+		}
+	}
+	return false
+}
+
 func envelope(a *article.Article) string {
 	from := a.Get("From")
 	addr := "MAILER-DAEMON"

@@ -1210,23 +1210,10 @@ func (s *Session) acceptPeerArticle(ctx context.Context, msgid string, raw []byt
 	return nil
 }
 
-// applyGroupBans drops newsgroups that match a ban pattern.
-// It reports banned=true when every group was dropped.
+// applyGroupBans reports whether the article touches an ignored or blocked group.
+// Any match rejects the whole article, including crossposts, so the body is not stored.
 func (s *Session) applyGroupBans(ctx context.Context, art *article.Article) (bool, error) {
-	patterns, err := s.store.ListGroupBans(ctx)
-	if err != nil || len(patterns) == 0 {
-		return false, err
-	}
-	groups := art.Newsgroups()
-	kept := wildmat.KeepGroups(patterns, groups)
-	if len(kept) == len(groups) {
-		return false, nil
-	}
-	if len(kept) == 0 {
-		return true, nil
-	}
-	art.Set("Newsgroups", strings.Join(kept, ","))
-	return false, nil
+	return store.GroupsUnwanted(ctx, s.store, art.Newsgroups())
 }
 
 func (s *Session) storeArticle(ctx context.Context, art *article.Article, wire []byte, isBinary bool) (*store.PostResult, error) {

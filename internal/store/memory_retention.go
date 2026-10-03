@@ -161,6 +161,8 @@ func (m *Memory) ResolveGroupAlert(_ context.Context, id int64, action string) e
 		case "block":
 			if g, ok := m.groups[group]; ok {
 				g.Status = "n"
+				g.RetentionDays = nil
+				g.RetentionMode = RetentionModeBlocked
 			}
 			m.alerts[i].Status = AlertBlocked
 		case "whitelist":

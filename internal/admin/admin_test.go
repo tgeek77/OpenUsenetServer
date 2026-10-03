@@ -163,3 +163,78 @@ func TestRememberMeAndPasswordChange(t *testing.T) {
 		t.Fatalf("profile %d %s", rr.Code, rr.Body.String())
 	}
 }
+
+func TestPortalStatsChrome(t *testing.T) {
+	statsAt := bytes.Index(indexHTML, []byte(`<main id="stats"`))
+	adminAt := bytes.Index(indexHTML, []byte(`<main id="admin"`))
+	statsNav := bytes.Index(indexHTML, []byte(`data-mode="stats"`))
+	adminGate := bytes.Index(indexHTML, []byte(`if (me.is_admin)`))
+	if statsAt < 0 || adminAt < statsAt || statsNav < 0 || adminGate < statsNav {
+		t.Fatal("stats page should be available to every signed-in user")
+	}
+	stats := indexHTML[statsAt:adminAt]
+	for _, want := range []string{"Group search", "Recent articles", "Newsgroup", "Sender", `id="gsearch"`, `id="arts"`} {
+		if !bytes.Contains(stats, []byte(want)) {
+			t.Fatalf("stats missing %s", want)
+		}
+	}
+	adminHTML := indexHTML[adminAt:]
+	if bytes.Contains(adminHTML, []byte("Recent articles")) || bytes.Contains(adminHTML, []byte(`id="groups"`)) {
+		t.Fatal("admin still has the group list or recent articles")
+	}
+	for _, theme := range []string{"Yaru", "Yaru Dark", "Adwaita", "Adwaita Dark", "Breeze", "Breeze Dark"} {
+		if !bytes.Contains(indexHTML, []byte(theme)) {
+			t.Fatalf("missing theme %s", theme)
+		}
+	}
+	if !bytes.Contains(indexHTML, []byte("scrollbox")) {
+		t.Fatal("missing scroll containers")
+	}
+}
+
+func TestRecentArticlesIncludeGroupAndSender(t *testing.T) {
+	if got := groupsFromXref("news.example local.test:3 alt.test:9"); got != "local.test, alt.test" {
+		t.Fatalf("xref groups: %q", got)
+	}
+	if got := groupsFromXref("misc.test:1"); got != "misc.test" {
+		t.Fatalf("bare xref: %q", got)
+	}
+
+	st := store.NewMemory()
+	ctx := context.Background()
+	if err := st.EnsureGroup(ctx, "local.test", "Local", "y"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.Post(ctx, "From: Ada <ada@example.org>\r\n", "body\n", "<a@news>", "hello", "Ada <ada@example.org>", "Sat, 03 Oct 2026 12:00:00 +0000", "", "news.example", 10, 1, []string{"local.test"}, false); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Defaults()
+	h := New(cfg, st, nil, nil, nil, nil, nil).Handler()
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/setup", bytes.NewBufferString(`{"username":"admin","password":"secret"}`))
+	req.Header.Set("Content-Type", "application/json")
+	h.ServeHTTP(rr, req)
+	cookie := rr.Result().Cookies()[0]
+
+	hash, err := auth.HashPassword("userpass")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.CreateUser(ctx, store.User{Username: "bob", PasswordHash: hash, Role: store.RoleUser, CanPost: true}); err != nil {
+		t.Fatal(err)
+	}
+	rr = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/api/login", bytes.NewBufferString(`{"username":"bob","password":"userpass"}`))
+	req.Header.Set("Content-Type", "application/json")
+	h.ServeHTTP(rr, req)
+	userCookie := rr.Result().Cookies()[0]
+
+	rr = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "/api/articles?limit=25", nil)
+	req.AddCookie(userCookie)
+	h.ServeHTTP(rr, req)
+	if rr.Code != 200 || !bytes.Contains(rr.Body.Bytes(), []byte(`"newsgroups":"local.test"`)) || !bytes.Contains(rr.Body.Bytes(), []byte(`"sender":"Ada `)) {
+		t.Fatalf("articles %d %s", rr.Code, rr.Body.String())
+	}
+	_ = cookie
+}

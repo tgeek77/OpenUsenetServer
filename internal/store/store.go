@@ -17,7 +17,7 @@ type Group struct {
 	Count         int64     `json:"count"`
 	CreatedAt     time.Time `json:"created_at"`
 	RetentionDays *int      `json:"retention_days,omitempty"` // nil = inherit forever default
-	RetentionMode string    `json:"retention_mode,omitempty"` // auto | whitelist
+	RetentionMode string    `json:"retention_mode,omitempty"` // auto | whitelist | blocked
 	Origin        string    `json:"origin,omitempty"`         // isc | control | local | admin
 }
 
@@ -31,7 +31,18 @@ const (
 const (
 	RetentionModeAuto      = "auto"
 	RetentionModeWhitelist = "whitelist"
+	RetentionModeBlocked   = "blocked"
 )
+
+// PurgeResult is what was removed because a group is ignored or blocked.
+// Groups are the ignored or blocked names. CrosspostGroups are other groups
+// that also carried a removed article. MessageIDs stay in history.
+type PurgeResult struct {
+	Articles        int
+	Groups          []string
+	CrosspostGroups []string
+	MessageIDs      []string
+}
 
 // GroupAlert is an admin review item (e.g. binary flood).
 type GroupAlert struct {
@@ -178,6 +189,9 @@ type Store interface {
 	ListGroupBans(ctx context.Context) ([]string, error)
 	AddGroupBan(ctx context.Context, pattern string) error
 	DeleteGroupBan(ctx context.Context, pattern string) error
+	// PurgeUnwantedArticles deletes every stored article filed in an ignored
+	// or blocked group, including crossposted copies, so the body is not kept.
+	PurgeUnwantedArticles(ctx context.Context) (PurgeResult, error)
 	// ListModeratorRules returns local submission overrides in first-match order.
 	// The public default is not stored here.
 	ListModeratorRules(ctx context.Context) ([]ModeratorRule, error)
