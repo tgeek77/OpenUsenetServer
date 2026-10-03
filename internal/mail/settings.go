@@ -118,7 +118,7 @@ func (s Settings) Normalize() Settings {
 		s.Security = SecuritySTARTTLS
 	case SecurityPlain, "none", "off":
 		s.Security = SecurityPlain
-	case SecurityTLS, "ssl", "smtps":
+	case SecurityTLS, "ssl", "smtps", "ssl/tls", "ssl-tls", "implicit":
 		s.Security = SecurityTLS
 	default:
 		s.Security = strings.ToLower(strings.TrimSpace(s.Security))

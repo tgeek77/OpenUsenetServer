@@ -65,6 +65,35 @@ func TestSendRawKeepsArticle(t *testing.T) {
 	}
 }
 
+func TestSendImplicitTLS(t *testing.T) {
+	cert, err := testCert()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ln, err := tls.Listen("tcp", "127.0.0.1:0", &tls.Config{Certificates: []tls.Certificate{cert}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	got := make(chan string, 1)
+	go serveSMTP(t, ln, false, got)
+
+	prev := tlsConfigForTest
+	tlsConfigForTest = &tls.Config{InsecureSkipVerify: true, ServerName: "127.0.0.1"}
+	t.Cleanup(func() { tlsConfigForTest = prev })
+
+	err = Send(context.Background(), Settings{
+		Host: "127.0.0.1", Port: portOf(ln), Security: SecurityTLS, From: "news@example.org",
+	}, Message{To: []string{"a@example.org"}, Subject: "ssl", Body: "ok"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := <-got
+	if !strings.Contains(body, "Subject: ssl") || strings.Contains(body, "STARTTLS") {
+		t.Fatalf("transcript:\n%s", body)
+	}
+}
+
 func TestSendRequiresSTARTTLS(t *testing.T) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

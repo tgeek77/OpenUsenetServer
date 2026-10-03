@@ -1,6 +1,10 @@
 package mail
 
-import "testing"
+import (
+	"context"
+	"strings"
+	"testing"
+)
 
 func TestNormalizeDefaultPorts(t *testing.T) {
 	if got := (Settings{Security: "plain"}).Normalize().Port; got != 25 {
@@ -14,6 +18,24 @@ func TestNormalizeDefaultPorts(t *testing.T) {
 	}
 	if got := (Settings{Security: "ssl"}).Normalize().Security; got != SecurityTLS {
 		t.Fatalf("security %s", got)
+	}
+	if got := (Settings{Security: "ssl/tls"}).Normalize().Security; got != SecurityTLS {
+		t.Fatalf("ssl/tls %s", got)
+	}
+}
+
+func TestImplicitTLSOnPort465(t *testing.T) {
+	if !implicitTLS(Settings{Port: 465, Security: SecurityAuto}) || !implicitTLS(Settings{Port: 465, Security: SecuritySTARTTLS}) {
+		t.Fatal("port 465 should speak SSL/TLS from the first byte")
+	}
+	if implicitTLS(Settings{Port: 587, Security: SecurityAuto}) || implicitTLS(Settings{Port: 25, Security: SecurityPlain}) {
+		t.Fatal("587 and plain port 25 stay in the clear until STARTTLS")
+	}
+	err := Send(context.Background(), Settings{
+		Host: "127.0.0.1", Port: 465, Security: SecurityPlain, From: "news@example.org",
+	}, Message{To: []string{"a@example.org"}, Subject: "x", Body: "y"})
+	if err == nil || !strings.Contains(err.Error(), "SSL/TLS") {
+		t.Fatalf("plain 465 %v", err)
 	}
 }
 

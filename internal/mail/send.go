@@ -73,12 +73,29 @@ func SendRaw(ctx context.Context, s Settings, recipients []string, raw []byte) e
 	return sendBytes(ctx, s, envelope, rcpts, raw)
 }
 
+// implicitTLS reports whether the TCP connection itself must be TLS.
+// Port 465 (SMTPS) speaks SSL/TLS from the first byte and never sends a plain greeting.
+// Auto and STARTTLS on that port use the same handshake. Port 587 stays STARTTLS.
+func implicitTLS(s Settings) bool {
+	switch s.Security {
+	case SecurityTLS:
+		return true
+	case SecurityAuto, SecuritySTARTTLS:
+		return s.Port == 465
+	default:
+		return false
+	}
+}
+
 func sendBytes(ctx context.Context, s Settings, envelope string, recipients []string, raw []byte) error {
+	if s.Security == SecurityPlain && s.Port == 465 {
+		return fmt.Errorf("port 465 requires SSL/TLS")
+	}
 	addr := net.JoinHostPort(s.Host, fmt.Sprintf("%d", s.Port))
 	dialer := &net.Dialer{Timeout: 20 * time.Second}
 	var conn net.Conn
 	var err error
-	if s.Security == SecurityTLS {
+	if implicitTLS(s) {
 		conn, err = tlsDial(ctx, dialer, addr, s.Host)
 	} else {
 		conn, err = dialer.DialContext(ctx, "tcp", addr)

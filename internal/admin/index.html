@@ -323,17 +323,17 @@ button.ovitem .depth { color: var(--muted); }
   </section>
   <section class="panel" id="mailpanel">
     <h2>Mail server</h2>
-    <p class="help">Outbound SMTP for a Postfix, sendmail, or other traditional mail server. A local relay is usually <span class="mono">127.0.0.1</span> port 25, security plain, with no username. A remote submission port is usually 587 with STARTTLS. The password is not shown again after you save it; leave that field blank to keep the saved one. Unapproved posts to moderated groups are mailed with these settings and are not stored here. The From address is the envelope sender.</p>
+    <p class="help">Outbound SMTP for a Postfix, sendmail, or other traditional mail server. A local relay is usually <span class="mono">127.0.0.1</span> port 25, security plain, with no username. Port 465 is SSL/TLS from the first byte. Port 587 is STARTTLS. Auto follows the port. The password is not shown again after you save it; leave that field blank to keep the saved one. Unapproved posts to moderated groups are mailed with these settings and are not stored here. The From address is the envelope sender.</p>
     <p class="mono" id="mailsrc"></p>
     <div class="grid2">
       <label>Host <input id="mailhost" placeholder="127.0.0.1" autocomplete="off"></label>
       <label>Port <input id="mailport" type="number" min="1" max="65535" placeholder="25"></label>
       <label>Security
         <select id="mailsec">
-          <option value="auto">Auto (STARTTLS if offered)</option>
+          <option value="auto">Auto (SSL/TLS on 465, STARTTLS if offered)</option>
           <option value="starttls">STARTTLS required</option>
           <option value="plain">Plain (no TLS)</option>
-          <option value="tls">Implicit TLS</option>
+          <option value="tls">SSL/TLS (port 465)</option>
         </select>
       </label>
       <label>From <input id="mailfrom" placeholder="news@news.example.org" autocomplete="off"></label>
@@ -1109,6 +1109,13 @@ $("mailsave").onclick = async () => {
     await loadMail();
   } catch (e) { $("mailmsg").textContent = e.message; }
 };
+
+$("mailport").addEventListener("change", () => {
+  const port = Number($("mailport").value);
+  const sec = $("mailsec").value;
+  if (port === 465 && (sec === "auto" || sec === "starttls")) $("mailsec").value = "tls";
+  if (port === 587 && sec === "tls") $("mailsec").value = "starttls";
+});
 
 $("mailtest").onclick = async () => {
   $("mailmsg").textContent = "";
