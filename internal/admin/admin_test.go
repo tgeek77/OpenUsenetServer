@@ -193,6 +193,10 @@ func TestPortalStatsChrome(t *testing.T) {
 	if !bytes.Contains(indexHTML, []byte("scrollbox")) {
 		t.Fatal("missing scroll containers")
 	}
+	ruler := []byte("----+----1----+----2----+----3----+----4----+----5----+----6----+----7----+----8")
+	if len(ruler) != 80 || !bytes.Contains(indexHTML, ruler) || !bytes.Contains(indexHTML, []byte(`wrap="off"`)) || !bytes.Contains(indexHTML, []byte("function wrapLongLines")) {
+		t.Fatal("compose box should show an 80-column ruler and hard-wrap")
+	}
 }
 
 func TestRecentArticlesIncludeGroupAndSender(t *testing.T) {

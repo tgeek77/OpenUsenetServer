@@ -93,7 +93,7 @@ input, select, button, textarea {
   font: inherit; background: var(--field); color: var(--ink); border: 1px solid var(--line); padding: 0.35rem 0.55rem;
 }
 textarea { width: 100%; min-height: 8rem; font-family: ui-monospace, monospace; font-size: 0.82rem; }
-button.primary, button:not(.secondary):not(.navbtn):not(.ovitem):not(.subitem) { background: var(--accent); color: var(--on-accent); border: 0; font-weight: 600; cursor: pointer; }
+button.primary, button:not(.secondary):not(.navbtn):not(.ovitem):not(.subitem):not(.unsub) { background: var(--accent); color: var(--on-accent); border: 0; font-weight: 600; cursor: pointer; }
 button.secondary { background: transparent; color: var(--ink); border: 1px solid var(--line); cursor: pointer; }
 .hidden { display: none !important; }
 .help { color: var(--muted); font-size: 0.85rem; margin: 0 0 0.75rem; }
@@ -140,10 +140,18 @@ button.ovitem .depth { color: var(--muted); }
 #artmeta { color: var(--muted); font-size: 0.82rem; }
 #artbody { flex: 1; overflow: auto; white-space: pre-wrap; background: var(--field); border: 1px solid var(--line); padding: 0.75rem; margin: 0; font-family: ui-monospace, monospace; font-size: 0.82rem; }
 #compose { border-top: 1px solid var(--line); padding: 0.75rem; background: var(--compose); }
+#cwrap { overflow-x: auto; max-width: 100%; }
+#cruler, #cbody {
+  box-sizing: content-box; width: 80ch; min-width: 80ch; max-width: none;
+  font-family: ui-monospace, "IBM Plex Mono", monospace; font-size: 13px; line-height: 1.35;
+}
+#cruler {
+  margin: 0; padding: 0 calc(0.55rem + 1px); border: 0; background: transparent;
+  color: var(--muted); white-space: pre; user-select: none; overflow: hidden;
+}
 #cbody {
-  width: 80ch; max-width: 100%; min-height: 12rem; resize: vertical;
-  font-family: ui-monospace, "IBM Plex Mono", monospace; font-size: 0.82rem;
-  line-height: 1.35; white-space: pre-wrap; overflow-wrap: break-word;
+  display: block; margin: 0; min-height: 12rem; resize: vertical; white-space: pre;
+  overflow-x: hidden; overflow-wrap: normal;
 }
 .toolbar { padding: 0.45rem 0.75rem; border-bottom: 1px solid var(--line); display: flex; flex-wrap: wrap; gap: 0.4rem; align-items: center; }
 .modal { position: fixed; inset: 0; background: rgba(0,0,0,0.55); display: flex; align-items: flex-start; justify-content: center; padding: 2rem 1rem; overflow: auto; z-index: 20; }
@@ -237,7 +245,10 @@ button.ovitem .depth { color: var(--muted); }
       <div class="row">
         <input id="csubj" placeholder="Subject" style="flex:1; min-width:12rem">
       </div>
-      <textarea id="cbody" cols="80" wrap="soft" spellcheck="true" placeholder="Article body (80 columns)"></textarea>
+      <div id="cwrap">
+        <pre id="cruler" aria-hidden="true">----+----1----+----2----+----3----+----4----+----5----+----6----+----7----+----8</pre>
+        <textarea id="cbody" cols="80" wrap="off" spellcheck="true" placeholder="Lines wrap at 80 columns"></textarea>
+      </div>
       <div class="row">
         <button id="csend">Send</button>
         <button class="secondary" id="ccancel">Cancel</button>
@@ -970,19 +981,72 @@ $("markall").onclick = async () => {
   await refreshOverviewKeepArt();
 };
 
+function wrapLongLines(text, caret) {
+  const src = String(text).replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  const track = typeof caret === "number" && caret >= 0;
+  let out = "";
+  let mapped = 0;
+  let found = !track;
+  let col = 0;
+  for (let i = 0; i <= src.length; i++) {
+    if (track && !found && i === caret) {
+      mapped = out.length;
+      found = true;
+    }
+    if (i === src.length) break;
+    const ch = src[i];
+    if (ch === "\n") {
+      out += "\n";
+      col = 0;
+      continue;
+    }
+    if (col === 80) {
+      const lineStart = out.lastIndexOf("\n") + 1;
+      const sp = out.slice(lineStart).lastIndexOf(" ");
+      if (sp > 0) {
+        const at = lineStart + sp;
+        out = out.slice(0, at) + "\n" + out.slice(at + 1);
+        col = out.length - (at + 1);
+      } else {
+        out += "\n";
+        if (found && i === caret) mapped++;
+        col = 0;
+      }
+    }
+    out += ch;
+    col++;
+  }
+  return { text: out, caret: mapped };
+}
+let wrappingBody = false;
+function enforce80(el) {
+  if (!el || wrappingBody) return;
+  const raw = el.value;
+  const start = wrapLongLines(raw, el.selectionStart);
+  if (start.text === raw) return;
+  const end = el.selectionStart === el.selectionEnd ? start : wrapLongLines(raw, el.selectionEnd);
+  wrappingBody = true;
+  el.setRangeText(start.text, 0, raw.length, "end");
+  el.selectionStart = start.caret;
+  el.selectionEnd = end.caret;
+  wrappingBody = false;
+}
+
 function showCompose(reply) {
   replyTo = reply;
   $("compose").classList.remove("hidden");
   $("cgroups").value = curGroup || "local.test";
   if (reply) {
     $("csubj").value = reply.subject && reply.subject.startsWith("Re:") ? reply.subject : ("Re: " + (reply.subject||""));
-    $("cbody").value = "\n\n" + (reply.from ? (reply.from + " wrote:\n") : "") +
+    const quoted = "\n\n" + (reply.from ? (reply.from + " wrote:\n") : "") +
       (reply.body||"").split("\n").map(l => "> " + l).join("\n");
+    $("cbody").value = wrapLongLines(quoted).text;
   } else {
     $("csubj").value = "";
     $("cbody").value = "";
   }
 }
+$("cbody").addEventListener("input", () => enforce80($("cbody")));
 $("composenew").onclick = () => showCompose(null);
 $("areply").onclick = () => { if (curArt) showCompose(curArt); };
 $("ccancel").onclick = () => { $("compose").classList.add("hidden"); replyTo = null; };
@@ -997,7 +1061,7 @@ $("csend").onclick = async () => {
       from: $("cfrom").value,
       newsgroups: $("cgroups").value,
       subject: $("csubj").value,
-      body: $("cbody").value,
+      body: wrapLongLines($("cbody").value).text,
     };
     if (replyTo) {
       body.reply_to_msgid = replyTo.message_id;
