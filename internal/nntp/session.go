@@ -81,6 +81,9 @@ func Serve(conn *Conn, st store.Store, mbox *archive.MBox, cfg config.Config, lg
 			if errors.Is(err, io.EOF) {
 				return
 			}
+			if errors.Is(err, errReplied) {
+				continue
+			}
 			s.log.Printf("nntp %s: %v", conn.Remote(), err)
 			_ = conn.Reply(FailAction, "internal error")
 		}
@@ -691,7 +694,7 @@ func (s *Session) requireFeedAuth(ctx context.Context) error {
 	peer := peerauth.MatchPeer(peers, s.conn.Remote())
 	if s.cfg.Inbound.PeerAuthRequired() {
 		if peer == nil {
-			return s.conn.Reply(ErrAccess, "IHAVE not permitted from your address")
+			return replied(s.conn.Reply(ErrAccess, "IHAVE not permitted from your address"))
 		}
 	}
 	if peer == nil {
@@ -702,7 +705,7 @@ func (s *Session) requireFeedAuth(ctx context.Context) error {
 		return nil
 	}
 	if !s.feedAuthOK || s.feedAuthPeer != peer.ID {
-		return s.conn.Reply(FailAuthNeeded, "Authentication required for IHAVE")
+		return replied(s.conn.Reply(FailAuthNeeded, "Authentication required for IHAVE"))
 	}
 	return nil
 }
@@ -978,10 +981,10 @@ func cmdIHave(s *Session, args []string) error {
 
 func cmdCheck(s *Session, args []string) error {
 	ctx := context.Background()
-	if err := s.beginPeerTransfer(ctx, FailCheckDefer, FailCheckRefuse); err != nil {
+	msgid := args[1]
+	if err := s.beginPeerTransferMsg(ctx, FailCheckDefer, FailCheckRefuse, msgid); err != nil {
 		return err
 	}
-	msgid := args[1]
 	if !article.ValidMessageID(msgid) {
 		return s.conn.Reply(ErrSyntax, "syntax error")
 	}
@@ -1021,12 +1024,26 @@ func (s *Session) beginPeerTransfer(ctx context.Context, deferCode, accessCode i
 	return s.beginPeerTransferMsg(ctx, deferCode, accessCode, "")
 }
 
+// errReplied means a final status line was already written. Callers must stop
+// the command; Serve must not write a second response.
+var errReplied = errors.New("nntp response already sent")
+
+func replied(err error) error {
+	if err != nil {
+		return err
+	}
+	return errReplied
+}
+
 func (s *Session) beginPeerTransferMsg(ctx context.Context, deferCode, accessCode int, msgid string) error {
 	reply := func(code int, text string) error {
+		var err error
 		if msgid != "" && (code == FailTakeThisReject || code == FailCheckRefuse || code == FailCheckDefer || code == OKCheckWant) {
-			return s.conn.ReplyArgs(code, []string{msgid}, text)
+			err = s.conn.ReplyArgs(code, []string{msgid}, text)
+		} else {
+			err = s.conn.Reply(code, text)
 		}
-		return s.conn.Reply(code, text)
+		return replied(err)
 	}
 	if s.ops != nil {
 		if ok, msg := s.ops.AcceptPeers(); !ok {
@@ -1044,6 +1061,9 @@ func (s *Session) beginPeerTransferMsg(ctx context.Context, deferCode, accessCod
 		peerHosts = store.PeerIHAVEHosts(peers)
 	}
 	if !inbound.Allowed(s.cfg, s.conn.Remote(), peerHosts) {
+		if s.log != nil {
+			s.log.Printf("nntp %s: transfer not permitted", s.conn.Remote())
+		}
 		return reply(accessCode, "transfer not permitted from your address")
 	}
 	return s.requireFeedAuth(ctx)

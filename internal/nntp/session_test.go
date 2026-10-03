@@ -345,6 +345,89 @@ func TestCheckAndTakeThis(t *testing.T) {
 	}
 }
 
+func startRestrictedServer(t *testing.T) net.Conn {
+	t.Helper()
+	a, b := net.Pipe()
+	st := store.NewMemory()
+	cfg := config.Defaults()
+	cfg.Server.Hostname = "news.test"
+	cfg.Server.Pathhost = "news.test"
+	cfg.Limits.IdleSeconds = 30
+	cfg.Limits.ArtCutoffDays = 0
+	cfg.Inbound.Allow = []string{"10.0.0.0/8"}
+	go nntp.Serve(nntp.NewConn(b, 30*time.Second), st, nil, cfg, nil, nil, nil, nil)
+	t.Cleanup(func() { _ = a.Close() })
+	return a
+}
+
+func TestDeniedPeerTransferSendsOneReply(t *testing.T) {
+	c := startRestrictedServer(t)
+	r := bufio.NewReader(c)
+	_ = c.SetDeadline(time.Now().Add(5 * time.Second))
+	_ = readLine(t, r)
+
+	msgid := "<test@test.test>"
+	_, _ = c.Write([]byte("check " + msgid + "\r\n"))
+	if l := readLine(t, r); l != "438 "+msgid+" transfer not permitted from your address" {
+		t.Fatalf("check deny %q", l)
+	}
+
+	_, _ = c.Write([]byte("IHAVE " + msgid + "\r\n"))
+	if l := readLine(t, r); l != "502 transfer not permitted from your address" {
+		t.Fatalf("ihave deny %q", l)
+	}
+
+	art := "Path: other!not-for-mail\r\n" +
+		"From: a@b.c\r\n" +
+		"Newsgroups: local.test\r\n" +
+		"Subject: denied\r\n" +
+		"Date: Mon, 01 Jan 2024 00:00:00 +0000\r\n" +
+		"Message-ID: " + msgid + "\r\n" +
+		"\r\n" +
+		"body\r\n" +
+		".\r\n"
+	_, _ = c.Write([]byte("TAKETHIS " + msgid + "\r\n" + art))
+	if l := readLine(t, r); l != "439 "+msgid+" transfer not permitted from your address" {
+		t.Fatalf("takethis deny %q", l)
+	}
+
+	_, _ = c.Write([]byte("DATE\r\n"))
+	if l := readLine(t, r); !strings.HasPrefix(l, "111 ") {
+		t.Fatalf("session desynced, next reply %q", l)
+	}
+}
+
+func TestCheckAuthRequiredSendsOneReply(t *testing.T) {
+	a, b := net.Pipe()
+	st := store.NewMemory()
+	if _, err := st.CreatePeer(context.Background(), store.Peer{
+		Host: "pipe", IncomingHost: "pipe", Enabled: true, IncomingPassword: "secret",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Defaults()
+	cfg.Server.Hostname = "news.test"
+	cfg.Server.Pathhost = "news.test"
+	cfg.Limits.IdleSeconds = 30
+	cfg.Limits.ArtCutoffDays = 0
+	go nntp.Serve(nntp.NewConn(b, 30*time.Second), st, nil, cfg, nil, nil, nil, nil)
+	t.Cleanup(func() { _ = a.Close() })
+
+	r := bufio.NewReader(a)
+	_ = a.SetDeadline(time.Now().Add(5 * time.Second))
+	_ = readLine(t, r)
+
+	msgid := "<test@test.test>"
+	_, _ = a.Write([]byte("CHECK " + msgid + "\r\n"))
+	if l := readLine(t, r); l != "480 Authentication required for IHAVE" {
+		t.Fatalf("check auth %q", l)
+	}
+	_, _ = a.Write([]byte("DATE\r\n"))
+	if l := readLine(t, r); !strings.HasPrefix(l, "111 ") {
+		t.Fatalf("session desynced, next reply %q", l)
+	}
+}
+
 func TestIHaveNewgroupControl(t *testing.T) {
 	c, st := startTestServer(t)
 	r := bufio.NewReader(c)
