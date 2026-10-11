@@ -527,7 +527,7 @@ func cmdOver(s *Session, args []string) error {
 	}
 	var body []byte
 	for _, r := range rows {
-		line := fmt.Sprintf("%d\t%s\t%s\t%s\t%s\t%s\t%d\t%d\tXref:full %s\r\n",
+		line := fmt.Sprintf("%d\t%s\t%s\t%s\t%s\t%s\t%d\t%d\tXref: %s\r\n",
 			r.Num, r.Subject, r.From, r.Date, r.MsgID, r.Refs, r.Bytes, r.Lines, r.Xref)
 		body = append(body, line...)
 	}

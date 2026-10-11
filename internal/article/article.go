@@ -354,7 +354,10 @@ func OverviewLine(num int64, a *Article, xref string) string {
 		strconv.Itoa(a.Lines()),
 	}
 	if xref != "" {
-		fields = append(fields, "Xref:full "+xref)
+		// OVERVIEW.FMT lists this column as "Xref:full". RFC 2980 says the
+		// :full suffix means the overview value itself is "Xref: <value>",
+		// not the literal format token "Xref:full".
+		fields = append(fields, "Xref: "+xref)
 	}
 	return strings.Join(fields, "\t")
 }

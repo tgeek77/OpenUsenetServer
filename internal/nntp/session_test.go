@@ -184,6 +184,9 @@ func TestGroupListPostArticle(t *testing.T) {
 	if len(olines) != 1 || !strings.Contains(olines[0], "hello") {
 		t.Fatalf("overview %v", olines)
 	}
+	if strings.Contains(olines[0], "Xref:full") || !strings.Contains(olines[0], "\tXref: news.test local.test:1") {
+		t.Fatalf("xref overview field: %q", olines[0])
+	}
 }
 
 func TestFetchByMsgidDoesNotChangeCurrent(t *testing.T) {
