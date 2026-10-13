@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"openusenet/internal/article"
 	"openusenet/internal/posting"
 	"openusenet/internal/store"
 )
@@ -107,6 +108,10 @@ func (p *Portal) readerSearchArticles(w http.ResponseWriter, r *http.Request, _ 
 	}
 	if hits == nil {
 		hits = []store.ArticleSearchHit{}
+	}
+	for i := range hits {
+		hits[i].Subject = article.DecodeWords(hits[i].Subject)
+		hits[i].From = article.DecodeWords(hits[i].From)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"hits": hits, "q": q, "group": group})
 }
@@ -225,6 +230,10 @@ func (p *Portal) readerOverview(w http.ResponseWriter, r *http.Request, u store.
 	if len(rows) > limit {
 		rows = rows[len(rows)-limit:]
 	}
+	for i := range rows {
+		rows[i].Subject = article.DecodeWords(rows[i].Subject)
+		rows[i].From = article.DecodeWords(rows[i].From)
+	}
 	last, _ := p.st.GetReadState(r.Context(), u.ID, name)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"group": name, "low": g.Low, "high": g.High, "last_read_num": last,
@@ -256,11 +265,11 @@ func (p *Portal) readerArticle(w http.ResponseWriter, r *http.Request, u store.U
 		"group":      name,
 		"num":        a.Num,
 		"message_id": a.MessageID,
-		"subject":    a.Subject,
-		"from":       a.From,
+		"subject":    article.DecodeWords(a.Subject),
+		"from":       article.DecodeWords(a.From),
 		"date":       a.Date,
 		"references": a.Refs,
-		"headers":    a.Headers,
+		"headers":    article.DecodeHeaderBlock(a.Headers),
 		"body":       a.Body,
 		"next":       nextNum,
 		"prev":       prevNum,
