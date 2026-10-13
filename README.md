@@ -1,6 +1,6 @@
 # OpenUsenetServer
 
-**Version 0.7.0**
+**Version 0.8.0**
 
 A modern easy-to-setup NNTP server based on [INN](https://www.eyrie.org/~eagle/software/inn/).
 
@@ -19,6 +19,26 @@ OpenUsenetServer (OUS) is for people who want to run a real Usenet peer without 
 - **Built for hobbyists** — a single VM hobbyist peer is a first-class deployment, not an afterthought.
 
 OUS speaks the same protocols and peering habits the network already uses, so you can join existing peers and grow from there.
+
+## Changelog
+
+Since 0.6.0.
+
+### 0.8.0
+
+- Portal themes: OpenUsenet, Yaru, Adwaita, and Breeze, each with a dark variant.
+- Ignore binary groups by wildcard. Matching articles are deleted and refused, including crossposts, and the live mbox spool is scrubbed. Hall of shame lists those groups.
+- Stats are rebuilt from articles still stored, at the top of each UTC hour.
+- Reader: unsubscribe, and an 80-column compose ruler that hard-wraps lines.
+- XOVER sends `Xref: host group:number`, so Newsreaders can fetch the article it just listed.
+- The web newsreader decodes RFC 2047 Subject and From text. NNTP articles stay encoded.
+
+### 0.7.0
+
+- Admin SMTP settings for a local relay or ports 25, 465, and 587, including implicit TLS on 465.
+- Unapproved posts to moderated groups are mailed to the moderator and not stored. Moderator addresses are configurable. TOP1000 reports use the same mail server.
+- Local Injection-Date is an RFC 5322 date, so INN peers accept it.
+- Reader list contrast, and the compose form ignores a second click while a post is sending.
 
 ## Screenshots
 
@@ -59,7 +79,7 @@ printf 'CAPABILITIES\r\nQUIT\r\n' | timeout 3 nc 127.0.0.1 119
 # admin (public): https://$ADMIN_DOMAIN/   # Caddy + Let's Encrypt; see docs/tls.md
 ```
 
-Compose uses `jsevans/openusenet:0.7.0` by default (`OPENUSENET_IMAGE` overrides the tag).
+Compose uses `jsevans/openusenet:0.8.0` by default (`OPENUSENET_IMAGE` overrides the tag).
 
 Default seed group: `local.test`, plus the ISC `active` / `newsgroups` files from https://ftp.isc.org/usenet/CONFIG/ (pulled on `openusenet migrate`).
 
@@ -70,7 +90,7 @@ Caddy terminates HTTPS for the admin portal on ports 80/443. Port 8080 is bound 
 Only needed if you are developing OUS or want an unreleased tree:
 
 ```bash
-docker build -t jsevans/openusenet:0.7.0 -t jsevans/openusenet:latest .
+docker build -t jsevans/openusenet:0.8.0 -t jsevans/openusenet:latest .
 # or: docker compose build
 docker compose up -d
 ```
