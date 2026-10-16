@@ -107,6 +107,59 @@ func TestReaderSubscribeOverviewPost(t *testing.T) {
 	_ = auth.SessionCookie
 }
 
+func TestReaderDecodesEncodedSubjectAndQuotedPrintableBody(t *testing.T) {
+	st := store.NewMemory()
+	ctx := context.Background()
+	if err := st.EnsureGroup(ctx, "cn.comp", "CN", "y"); err != nil {
+		t.Fatal(err)
+	}
+	subj := "=?utf-8?q?=5BS=5D_=E5=AD=98=E5=9C=A8=E6=AF=94=E5=9C=B0=E7=90=83?= =?utf-8?q?=E6=9B=B4=E5=AE=9C=E5=B1=85=E7=9A=84=E6=98=9F=E7=90=83?="
+	headers := "Subject: " + subj + "\r\nFrom: Mobot <mobot@fakemail.com>\r\n" +
+		"Content-Type: text/plain; charset=utf-8\r\nContent-Transfer-Encoding: quoted-printable\r\n"
+	body := "[S] =E5=AD=98=E5=9C=A8=E6=AF=94=E5=9C=B0=E7=90=83\r\n"
+	if _, err := st.Post(ctx, headers, body, "<qp@test>", subj, "Mobot <mobot@fakemail.com>",
+		"Thu, 15 Oct 2026 23:40:25 -0000", "", "news.test", len(body), 1, []string{"cn.comp"}, false); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := config.Defaults()
+	cfg.Server.Hostname = "news-a"
+	h := New(cfg, st, nil, nil, nil, nil, nil).Handler()
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/setup", bytes.NewBufferString(`{"username":"alice","password":"secret"}`))
+	req.Header.Set("Content-Type", "application/json")
+	h.ServeHTTP(rr, req)
+	if rr.Code != 200 {
+		t.Fatal(rr.Body.String())
+	}
+	cookie := rr.Result().Cookies()[0]
+
+	rr = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "/api/reader/groups/cn.comp/overview", nil)
+	req.AddCookie(cookie)
+	h.ServeHTTP(rr, req)
+	if rr.Code != 200 {
+		t.Fatal(rr.Body.String())
+	}
+	if !bytes.Contains(rr.Body.Bytes(), []byte(`[S] 存在比地球更宜居的星球`)) {
+		t.Fatalf("overview subject: %s", rr.Body.String())
+	}
+
+	rr = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "/api/reader/groups/cn.comp/article/1", nil)
+	req.AddCookie(cookie)
+	h.ServeHTTP(rr, req)
+	if rr.Code != 200 {
+		t.Fatal(rr.Body.String())
+	}
+	if !bytes.Contains(rr.Body.Bytes(), []byte(`[S] 存在比地球`)) {
+		t.Fatalf("article body: %s", rr.Body.String())
+	}
+	if bytes.Contains(rr.Body.Bytes(), []byte(`=E5=AD=98`)) {
+		t.Fatalf("body still quoted-printable: %s", rr.Body.String())
+	}
+}
+
 func TestReaderStatsNonAdmin(t *testing.T) {
 	st := store.NewMemory()
 	ctx := context.Background()

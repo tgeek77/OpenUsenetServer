@@ -1,24 +1,14 @@
 package article
 
 import (
-	"io"
 	"mime"
 	"strings"
-
-	"golang.org/x/text/encoding/htmlindex"
-	"golang.org/x/text/transform"
 )
 
 // wordDecoder decodes RFC 2047 encoded-words (=?charset?Q?...?= and B form).
-// CharsetReader covers charsets the standard library does not (koi8-r, windows-1251, and so on).
+// CharsetReader uses IANA MIME names so any declared charset converts to UTF-8.
 var wordDecoder = mime.WordDecoder{
-	CharsetReader: func(charset string, input io.Reader) (io.Reader, error) {
-		enc, err := htmlindex.Get(charset)
-		if err != nil {
-			return nil, err
-		}
-		return transform.NewReader(input, enc.NewDecoder()), nil
-	},
+	CharsetReader: charsetReader,
 }
 
 // DecodeWords decodes RFC 2047 encoded-words in a header value.

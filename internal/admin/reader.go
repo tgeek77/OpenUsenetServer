@@ -270,7 +270,7 @@ func (p *Portal) readerArticle(w http.ResponseWriter, r *http.Request, u store.U
 		"date":       a.Date,
 		"references": a.Refs,
 		"headers":    article.DecodeHeaderBlock(a.Headers),
-		"body":       a.Body,
+		"body":       article.DecodeBodyForDisplay(a.Headers, a.Body),
 		"next":       nextNum,
 		"prev":       prevNum,
 	})

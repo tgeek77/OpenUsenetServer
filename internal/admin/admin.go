@@ -601,7 +601,7 @@ func (p *Portal) articles(w http.ResponseWriter, r *http.Request, _ store.User) 
 	out := make([]row, 0, len(arts))
 	for _, a := range arts {
 		out = append(out, row{
-			MessageID: a.MessageID, Subject: a.Subject, From: a.From, Sender: a.From,
+			MessageID: a.MessageID, Subject: article.DecodeWords(a.Subject), From: article.DecodeWords(a.From), Sender: article.DecodeWords(a.From),
 			Newsgroups: groupsFromXref(a.Xref), Date: a.Date,
 			StoredAt: a.StoredAt.UTC().Format(time.RFC3339), Xref: a.Xref, Bytes: a.Bytes,
 		})
@@ -642,10 +642,10 @@ func (p *Portal) article(w http.ResponseWriter, r *http.Request, _ store.User) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"message_id": a.MessageID,
-		"headers":    a.Headers,
-		"body":       a.Body,
-		"subject":    a.Subject,
-		"from":       a.From,
+		"headers":    article.DecodeHeaderBlock(a.Headers),
+		"body":       article.DecodeBodyForDisplay(a.Headers, a.Body),
+		"subject":    article.DecodeWords(a.Subject),
+		"from":       article.DecodeWords(a.From),
 	})
 }
 
