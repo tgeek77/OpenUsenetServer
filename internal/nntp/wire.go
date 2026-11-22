@@ -86,13 +86,43 @@ var errTooLong = fmt.Errorf("line too long")
 
 func IsTooLong(err error) bool { return err == errTooLong }
 
+// readArticleLine reads one CRLF-terminated line, preserving bare CR or LF inside the line.
+func (c *Conn) readArticleLine() (string, error) {
+	c.bumpRead()
+	var buf []byte
+	for {
+		b, err := c.r.ReadByte()
+		if err != nil {
+			return "", err
+		}
+		buf = append(buf, b)
+		if len(buf) > c.maxLine {
+			// Consume until CRLF so the next command is aligned, then error.
+			for len(buf) < 2 || buf[len(buf)-2] != '\r' || buf[len(buf)-1] != '\n' {
+				b, err = c.r.ReadByte()
+				if err != nil {
+					return "", errTooLong
+				}
+				buf = append(buf, b)
+				if len(buf) > 1<<20 {
+					return "", errTooLong
+				}
+			}
+			return "", errTooLong
+		}
+		if b == '\n' && len(buf) >= 2 && buf[len(buf)-2] == '\r' {
+			return string(buf[:len(buf)-2]), nil
+		}
+	}
+}
+
 // ReadArticle reads a dot-stuffed multi-line block (POST/IHAVE body).
 func (c *Conn) ReadArticle(maxBytes int) ([]byte, error) {
 	c.bumpRead()
 	var out []byte
 	for {
 		c.maxLine = 1 << 20 // article lines are not capped at 512
-		line, err := c.readLine()
+		line, err := c.readArticleLine()
 		if err != nil {
 			return nil, err
 		}
@@ -106,7 +136,7 @@ func (c *Conn) ReadArticle(maxBytes int) ([]byte, error) {
 		if maxBytes > 0 && len(out) > maxBytes {
 			// Drain to terminator.
 			for {
-				line, err := c.readLine()
+				line, err := c.readArticleLine()
 				if err != nil {
 					return nil, err
 				}
@@ -227,22 +257,15 @@ func (c *Conn) WriteDot(body []byte) error {
 func splitCRLF(b []byte) [][]byte {
 	var lines [][]byte
 	start := 0
-	for i := 0; i < len(b); i++ {
-		if b[i] == '\n' {
-			end := i
-			if end > start && b[end-1] == '\r' {
-				end--
-			}
-			lines = append(lines, b[start:end])
-			start = i + 1
+	for i := 0; i+1 < len(b); i++ {
+		if b[i] == '\r' && b[i+1] == '\n' {
+			lines = append(lines, b[start:i])
+			start = i + 2
+			i++
 		}
 	}
 	if start < len(b) {
-		end := len(b)
-		if end > start && b[end-1] == '\r' {
-			end--
-		}
-		lines = append(lines, b[start:end])
+		lines = append(lines, b[start:])
 	}
 	return lines
 }

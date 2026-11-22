@@ -25,12 +25,13 @@ type Feeder interface {
 
 // Input is a web or programmatic post/reply.
 type Input struct {
-	Newsgroups string `json:"newsgroups"`
-	Subject    string `json:"subject"`
-	From       string `json:"from"`
-	Body       string `json:"body"`
-	References string `json:"references"`
-	ReplyToID  string `json:"reply_to_msgid"`
+	Newsgroups     string `json:"newsgroups"`
+	Subject        string `json:"subject"`
+	From           string `json:"from"`
+	Body           string `json:"body"`
+	References     string `json:"references"`
+	ReplyToID      string `json:"reply_to_msgid"`
+	PostingAccount string `json:"-"`
 }
 
 // Outcome is a stored article or a moderated submission that was mailed.
@@ -91,9 +92,10 @@ func Accept(ctx context.Context, cfg config.Config, st store.Store, mbox *archiv
 		return nil, err
 	}
 	if err := article.InjectForPost(art, article.InjectOpts{
-		Pathhost:     cfg.Server.Pathhost,
-		Hostname:     cfg.Server.Hostname,
-		Organization: cfg.Server.Organization,
+		Pathhost:       cfg.Server.Pathhost,
+		Hostname:       cfg.Server.Hostname,
+		Organization:   cfg.Server.Organization,
+		PostingAccount: in.PostingAccount,
 	}); err != nil {
 		return nil, err
 	}

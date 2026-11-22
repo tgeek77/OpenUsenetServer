@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -42,13 +43,28 @@ type Feeder struct {
 	ok      atomic.Int64
 	fail    atomic.Int64
 	last    atomic.Value // string
+
+	drainMu      sync.Mutex
+	draining     bool
+	drainPending bool
+
+	connMu sync.Mutex
+	conns  map[int64]*peerConn
+	closed bool
 }
 
 func New(cfg config.Config, peers PeerSource, arts ArticleSource, lg *log.Logger) *Feeder {
 	if lg == nil {
 		lg = log.Default()
 	}
-	return &Feeder{cfg: cfg, peers: peers, arts: arts, log: lg, timeout: 15 * time.Second}
+	return &Feeder{
+		cfg:     cfg,
+		peers:   peers,
+		arts:    arts,
+		log:     lg,
+		timeout: 15 * time.Second,
+		conns:   make(map[int64]*peerConn),
+	}
 }
 
 // Offer enqueues the article for peers whose Path/patterns/flags allow it.
@@ -66,7 +82,7 @@ func (f *Feeder) Offer(msgid, path string, groups []string, wire []byte) {
 		}
 	}
 	view := ArticleView{Groups: groups, Path: path, Bytes: len(wire)}
-	if art, err := article.Parse(wire); err == nil && art != nil {
+	if art, err := article.ParseLenient(wire); err == nil && art != nil {
 		view = ViewFromArticle(art, len(wire))
 		if path != "" {
 			view.Path = path
@@ -77,6 +93,7 @@ func (f *Feeder) Offer(msgid, path string, groups []string, wire []byte) {
 	}
 	view.GroupStatus = f.groupStatus(context.Background(), view.Groups)
 
+	enqueued := false
 	for _, p := range list {
 		if skipPeer(f.cfg, p, view.Path) {
 			continue
@@ -89,8 +106,41 @@ func (f *Feeder) Offer(msgid, path string, groups []string, wire []byte) {
 			continue
 		}
 		f.offered.Add(1)
+		enqueued = true
 	}
-	go f.drainOnce(context.Background())
+	if enqueued {
+		f.triggerDrain()
+	}
+}
+
+// triggerDrain schedules a single background drain if one is not already active.
+// Concurrent offers coalesce into a single follow-up pass instead of opening
+// unbounded parallel connections.
+func (f *Feeder) triggerDrain() {
+	f.drainMu.Lock()
+	if f.draining {
+		f.drainPending = true
+		f.drainMu.Unlock()
+		return
+	}
+	f.draining = true
+	f.drainMu.Unlock()
+	go f.runDrainLoop(context.Background())
+}
+
+func (f *Feeder) runDrainLoop(ctx context.Context) {
+	for {
+		f.drainOnce(ctx)
+		f.drainMu.Lock()
+		if !f.drainPending || ctx.Err() != nil {
+			f.draining = false
+			f.drainPending = false
+			f.drainMu.Unlock()
+			return
+		}
+		f.drainPending = false
+		f.drainMu.Unlock()
+	}
 }
 
 func (f *Feeder) groupStatus(ctx context.Context, groups []string) map[string]string {
@@ -113,10 +163,12 @@ func (f *Feeder) RunWorker(ctx context.Context) {
 	if f == nil || f.arts == nil {
 		return
 	}
+	defer f.Close()
 	t := time.NewTicker(5 * time.Second)
 	defer t.Stop()
 	for {
-		f.drainOnce(ctx)
+		f.drainIfIdle(ctx)
+		f.pruneIdleConns()
 		select {
 		case <-ctx.Done():
 			return
@@ -125,30 +177,126 @@ func (f *Feeder) RunWorker(ctx context.Context) {
 	}
 }
 
-func (f *Feeder) drainOnce(ctx context.Context) {
-	items, err := f.arts.ClaimFeedDue(ctx, 32)
-	if err != nil {
-		f.log.Printf("feed claim: %v", err)
+func (f *Feeder) drainIfIdle(ctx context.Context) {
+	f.drainMu.Lock()
+	if f.draining {
+		f.drainPending = true
+		f.drainMu.Unlock()
 		return
 	}
-	for _, it := range items {
-		accepted, summary, err := f.deliver(ctx, it)
+	f.draining = true
+	f.drainMu.Unlock()
+	f.runDrainLoop(ctx)
+}
+
+func (f *Feeder) drainOnce(ctx context.Context) {
+	for ctx.Err() == nil {
+		items, err := f.arts.ClaimFeedDue(ctx, 32)
 		if err != nil {
-			f.fail.Add(1)
-			backoff := retryBackoff(it.Attempts)
-			_ = f.arts.FailFeed(ctx, it.ID, err.Error(), backoff)
-			f.last.Store(fmt.Sprintf("error %s -> peer %d: %s", it.MessageID, it.PeerID, err.Error()))
-			f.log.Printf("feed %s peer=%d: %v (retry in %s)", it.MessageID, it.PeerID, err, backoff)
-			continue
+			f.log.Printf("feed claim: %v", err)
+			return
 		}
-		_ = f.arts.CompleteFeed(ctx, it.ID)
-		if summary != "" {
-			f.last.Store(summary)
+		if len(items) == 0 {
+			return
 		}
-		if accepted {
-			f.ok.Add(1)
+
+		// Group claimed items by peer while preserving peer encounter order.
+		var peerOrder []int64
+		byPeer := make(map[int64][]store.FeedQueueItem)
+		for _, it := range items {
+			if _, ok := byPeer[it.PeerID]; !ok {
+				peerOrder = append(peerOrder, it.PeerID)
+			}
+			byPeer[it.PeerID] = append(byPeer[it.PeerID], it)
+		}
+
+		for _, peerID := range peerOrder {
+			if ctx.Err() != nil {
+				return
+			}
+			f.deliverPeerItems(ctx, peerID, byPeer[peerID])
+		}
+
+		if len(items) < 32 {
+			return
 		}
 	}
+}
+
+func (f *Feeder) deliverPeerItems(ctx context.Context, peerID int64, items []store.FeedQueueItem) {
+	peer, err := f.arts.GetPeer(ctx, peerID)
+	if err != nil {
+		for _, it := range items {
+			f.recordFail(ctx, it, err)
+		}
+		return
+	}
+	label := fmt.Sprintf("peer %d", peerID)
+	if peer != nil && peer.Name != "" {
+		label = peer.Name
+	}
+	if peer == nil || !peer.Enabled {
+		for _, it := range items {
+			_ = f.arts.CompleteFeed(ctx, it.ID)
+			f.last.Store(fmt.Sprintf("not sent %s -> %s (peer disabled)", it.MessageID, label))
+		}
+		return
+	}
+
+	var ready []preparedItem
+	for _, it := range items {
+		art, err := f.arts.GetByMsgID(ctx, it.MessageID)
+		if err != nil {
+			f.recordFail(ctx, it, err)
+			continue
+		}
+		if art == nil {
+			_ = f.arts.CompleteFeed(ctx, it.ID)
+			f.last.Store(fmt.Sprintf("not sent %s -> %s (article missing)", it.MessageID, label))
+			continue
+		}
+		wire := []byte(art.Headers + "\r\n\r\n" + art.Body)
+		parsed, _ := article.ParseLenient(wire)
+		view := ViewFromArticle(parsed, len(wire))
+		if parsed == nil {
+			view = ArticleView{Bytes: len(wire)}
+		}
+		view.GroupStatus = f.groupStatus(ctx, view.Groups)
+		if !PeerWantsArticle(*peer, view) {
+			_ = f.arts.CompleteFeed(ctx, it.ID)
+			f.last.Store(fmt.Sprintf("not sent %s -> %s (patterns/flags)", it.MessageID, label))
+			continue
+		}
+		ready = append(ready, preparedItem{item: it, wire: wire})
+	}
+
+	if len(ready) == 0 {
+		return
+	}
+
+	where := peer.Addr()
+	outcomes := f.deliverBatch(*peer, ready)
+	for _, o := range outcomes {
+		if o.err != nil {
+			f.recordFail(ctx, o.item, o.err)
+			continue
+		}
+		_ = f.arts.CompleteFeed(ctx, o.item.ID)
+		if o.accepted {
+			f.ok.Add(1)
+			f.last.Store(fmt.Sprintf("accepted %s -> %s (%s)", o.item.MessageID, label, where))
+		} else {
+			f.last.Store(fmt.Sprintf("refused %s -> %s (%s)", o.item.MessageID, label, where))
+		}
+	}
+}
+
+func (f *Feeder) recordFail(ctx context.Context, it store.FeedQueueItem, err error) {
+	f.fail.Add(1)
+	backoff := retryBackoff(it.Attempts)
+	_ = f.arts.FailFeed(ctx, it.ID, err.Error(), backoff)
+	f.last.Store(fmt.Sprintf("error %s -> peer %d: %s", it.MessageID, it.PeerID, err.Error()))
+	f.log.Printf("feed %s peer=%d: %v (retry in %s)", it.MessageID, it.PeerID, err, backoff)
 }
 
 func retryBackoff(attempts int) time.Duration {
@@ -160,47 +308,6 @@ func retryBackoff(attempts int) time.Duration {
 		d = 30 * time.Minute
 	}
 	return d
-}
-
-func (f *Feeder) deliver(ctx context.Context, it store.FeedQueueItem) (accepted bool, summary string, err error) {
-	peer, err := f.arts.GetPeer(ctx, it.PeerID)
-	if err != nil {
-		return false, "", err
-	}
-	label := fmt.Sprintf("peer %d", it.PeerID)
-	if peer != nil && peer.Name != "" {
-		label = peer.Name
-	}
-	if peer == nil || !peer.Enabled {
-		_ = f.arts.CompleteFeed(ctx, it.ID)
-		return false, fmt.Sprintf("not sent %s -> %s (peer disabled)", it.MessageID, label), nil
-	}
-	art, err := f.arts.GetByMsgID(ctx, it.MessageID)
-	if err != nil {
-		return false, "", err
-	}
-	if art == nil {
-		return false, fmt.Sprintf("not sent %s -> %s (article missing)", it.MessageID, label), nil
-	}
-	wire := []byte(art.Headers + "\r\n\r\n" + art.Body)
-	parsed, _ := article.Parse(wire)
-	view := ViewFromArticle(parsed, len(wire))
-	if parsed == nil {
-		view = ArticleView{Bytes: len(wire)}
-	}
-	view.GroupStatus = f.groupStatus(ctx, view.Groups)
-	if !PeerWantsArticle(*peer, view) {
-		return false, fmt.Sprintf("not sent %s -> %s (patterns/flags)", it.MessageID, label), nil
-	}
-	accepted, err = f.deliverArticle(*peer, it.MessageID, wire)
-	if err != nil {
-		return false, "", err
-	}
-	where := peer.Addr()
-	if accepted {
-		return true, fmt.Sprintf("accepted %s -> %s (%s)", it.MessageID, label, where), nil
-	}
-	return false, fmt.Sprintf("refused %s -> %s (%s)", it.MessageID, label, where), nil
 }
 
 func skipPeer(cfg config.Config, p store.Peer, path string) bool {

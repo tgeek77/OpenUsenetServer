@@ -384,10 +384,11 @@ func (s *Session) fetch(args []string, code int, head, body bool) error {
 		return s.conn.ReplyArgs(code, []string{nstr, a.MessageID}, text)
 	}
 	var payload []byte
+	hdr := article.WithXref(a.Headers, a.Xref)
 	if head && body {
-		payload = []byte(a.Headers + "\r\n\r\n" + a.Body)
+		payload = []byte(hdr + "\r\n\r\n" + a.Body)
 	} else if head {
-		payload = []byte(a.Headers + "\r\n")
+		payload = []byte(hdr + "\r\n")
 	} else {
 		payload = []byte(a.Body)
 	}
@@ -500,17 +501,12 @@ func cmdOver(s *Session, args []string) error {
 		if a == nil {
 			return s.conn.Reply(FailMsgidNotFound, "no article with that message-id")
 		}
-		line := article.OverviewLine(0, &article.Article{
-			Headers: map[string][]string{
-				"Subject": {a.Subject}, "From": {a.From}, "Date": {a.Date},
-				"Message-ID": {a.MessageID}, "References": {a.Refs},
-			},
-			Body: a.Body,
-		}, a.Xref)
+		line := formatOverviewLine(0, a.Subject, a.From, a.Date, a.MessageID, a.Refs, a.Bytes, a.Lines, a.Xref)
 		return s.conn.WriteBlock(OKOver, nil, "Overview information follows", []byte(line+"\r\n"))
 	}
+	hasRange := len(args) == 2
 	lo, hi := s.cur, s.cur
-	if len(args) == 2 {
+	if hasRange {
 		var err error
 		lo, hi, err = parseRange(args[1])
 		if err != nil {
@@ -518,6 +514,7 @@ func cmdOver(s *Session, args []string) error {
 		}
 		if lo == 0 && hi == 0 {
 			lo, hi = s.cur, s.cur
+			hasRange = false
 		}
 	}
 	if lo <= 0 {
@@ -528,15 +525,32 @@ func cmdOver(s *Session, args []string) error {
 		return err
 	}
 	if len(rows) == 0 {
+		if !hasRange {
+			return s.conn.Reply(FailArtnumInvalid, "current article number is invalid")
+		}
 		return s.conn.Reply(FailArtnumNotFound, "no articles in that range")
 	}
 	var body []byte
 	for _, r := range rows {
-		line := fmt.Sprintf("%d\t%s\t%s\t%s\t%s\t%s\t%d\t%d\tXref: %s\r\n",
-			r.Num, r.Subject, r.From, r.Date, r.MsgID, r.Refs, r.Bytes, r.Lines, r.Xref)
-		body = append(body, line...)
+		body = append(body, formatOverviewLine(r.Num, r.Subject, r.From, r.Date, r.MsgID, r.Refs, r.Bytes, r.Lines, r.Xref)...)
+		body = append(body, '\r', '\n')
 	}
 	return s.conn.WriteBlock(OKOver, nil, "Overview information follows", body)
+}
+
+func formatOverviewLine(num int64, subject, from, date, msgid, refs string, bytes, lines int, xref string) string {
+	clean := func(s string) string {
+		s = strings.ReplaceAll(s, "\t", " ")
+		s = strings.ReplaceAll(s, "\r", " ")
+		s = strings.ReplaceAll(s, "\n", " ")
+		return s
+	}
+	line := fmt.Sprintf("%d\t%s\t%s\t%s\t%s\t%s\t%d\t%d",
+		num, clean(subject), clean(from), clean(date), clean(msgid), clean(refs), bytes, lines)
+	if xref != "" {
+		line += "\tXref: " + clean(xref)
+	}
+	return line
 }
 
 func cmdHdr(s *Session, args []string) error {
@@ -556,22 +570,33 @@ func cmdHdr(s *Session, args []string) error {
 		line := fmt.Sprintf("0 %s\r\n", val)
 		return s.conn.WriteBlock(OKHdr, nil, "headers follow", []byte(line))
 	}
+	hasRange := len(args) == 3
 	lo, hi := s.cur, s.cur
-	if len(args) == 3 {
+	if hasRange {
 		var err error
 		lo, hi, err = parseRange(args[2])
 		if err != nil {
 			return s.conn.Reply(ErrSyntax, "syntax error")
 		}
+		if lo == 0 && hi == 0 {
+			lo, hi = s.cur, s.cur
+			hasRange = false
+		}
 	}
 	if s.group == nil {
 		return s.conn.Reply(FailNoGroup, "no newsgroup selected")
+	}
+	if lo <= 0 {
+		return s.conn.Reply(FailArtnumInvalid, "current article number is invalid")
 	}
 	rows, err := s.store.Header(context.Background(), s.group.Name, lo, hi, header)
 	if err != nil {
 		return err
 	}
 	if len(rows) == 0 {
+		if !hasRange {
+			return s.conn.Reply(FailArtnumInvalid, "current article number is invalid")
+		}
 		return s.conn.Reply(FailArtnumNotFound, "no articles in that range")
 	}
 	var body []byte
@@ -665,14 +690,14 @@ func (s *Session) requirePostAuth() error {
 		return nil // open posting until first user is created
 	}
 	if !s.authOK {
-		return s.conn.Reply(FailAuthNeeded, "Authentication required for POST")
+		return replied(s.conn.Reply(FailAuthNeeded, "Authentication required for POST"))
 	}
 	u, err := s.store.GetUser(context.Background(), s.authUser)
 	if err != nil {
 		return err
 	}
 	if u == nil || !u.MayPost() {
-		return s.conn.Reply(FailPostAuth, "posting not permitted")
+		return replied(s.conn.Reply(FailPostAuth, "posting not permitted"))
 	}
 	return nil
 }
@@ -722,7 +747,7 @@ func (s *Session) filterArticle(raw []byte, rejectCode int, msgid string) error 
 	r := cleanfeed.Check(s.cfg.Cleanfeed, raw)
 	if r.Reject {
 		s.rememberReject(msgid)
-		return s.conn.Reply(rejectCode, r.Reason)
+		return replied(s.conn.Reply(rejectCode, r.Reason))
 	}
 	if r.Audit && s.log != nil {
 		s.log.Printf("cleanfeed audit: %s", r.Reason)
@@ -751,9 +776,9 @@ func (s *Session) refuseAccept(post bool) error {
 		reason = "server paused"
 	}
 	if post {
-		return s.conn.Reply(FailPostReject, reason)
+		return replied(s.conn.Reply(FailPostReject, reason))
 	}
-	return s.conn.Reply(FailIHaveDefer, reason)
+	return replied(s.conn.Reply(FailIHaveDefer, reason))
 }
 
 func (s *Session) checkCutoff(art *article.Article, rejectCode int) error {
@@ -761,7 +786,7 @@ func (s *Session) checkCutoff(art *article.Article, rejectCode int) error {
 		return nil
 	}
 	s.rememberReject(art.Get("Message-ID"))
-	return s.conn.Reply(rejectCode, "article too old")
+	return replied(s.conn.Reply(rejectCode, "article too old"))
 }
 
 // submitModerated mails a local unapproved post and does not store it.
@@ -872,6 +897,9 @@ func (s *Session) matchInboundPeer(ctx context.Context) *store.Peer {
 		}
 	}
 	remote := s.conn.Remote()
+	if p := peerauth.MatchPeer(peers, remote); p != nil {
+		return p
+	}
 	host, _, _ := net.SplitHostPort(remote)
 	if host == "" {
 		host = remote
@@ -881,10 +909,8 @@ func (s *Session) matchInboundPeer(ctx context.Context) *store.Peer {
 		if !p.Enabled {
 			continue
 		}
-		for _, h := range []string{p.IncomingHost, p.Host, p.Name} {
-			if h != "" && strings.EqualFold(h, host) {
-				return p
-			}
+		if p.Name != "" && strings.EqualFold(p.Name, host) {
+			return p
 		}
 	}
 	return nil
@@ -932,9 +958,10 @@ func cmdPost(s *Session, _ []string) error {
 		return s.conn.Reply(FailPostReject, err.Error())
 	}
 	if err := article.InjectForPost(art, article.InjectOpts{
-		Pathhost:     s.cfg.Server.Pathhost,
-		Hostname:     s.cfg.Server.Hostname,
-		Organization: s.cfg.Server.Organization,
+		Pathhost:       s.cfg.Server.Pathhost,
+		Hostname:       s.cfg.Server.Hostname,
+		Organization:   s.cfg.Server.Organization,
+		PostingAccount: s.authUser,
 	}); err != nil {
 		return s.conn.Reply(FailPostReject, err.Error())
 	}
@@ -1184,7 +1211,11 @@ func (s *Session) acceptPeerArticle(ctx context.Context, msgid string, raw []byt
 			s.log.Printf("peer transfer cancel %s: %v", msgid, err)
 			return s.replyTransfer(deferCode, msgid, "try again later", withMsgID)
 		}
-		return s.replyTransfer(okCode, msgid, "cancel transferred "+msgid, withMsgID)
+		msg := "cancel transferred " + msgid
+		if withMsgID {
+			msg = "cancel transferred"
+		}
+		return s.replyTransfer(okCode, msgid, msg, withMsgID)
 	} else if err != nil {
 		s.log.Printf("peer transfer control %s: %v", msgid, err)
 		return s.replyTransfer(rejectCode, msgid, err.Error(), withMsgID)
@@ -1209,7 +1240,11 @@ func (s *Session) acceptPeerArticle(ctx context.Context, msgid string, raw []byt
 	if _, err := s.store.NoteAccept(ctx, art.Newsgroups(), isBin, retention.FloodFromConfig(s.cfg)); err != nil && s.log != nil {
 		s.log.Printf("retention note: %v", err)
 	}
-	if err := s.replyTransfer(okCode, msgid, "article transferred "+msgid, withMsgID); err != nil {
+	msg := "article transferred " + msgid
+	if withMsgID {
+		msg = "article transferred"
+	}
+	if err := s.replyTransfer(okCode, msgid, msg, withMsgID); err != nil {
 		return err
 	}
 	s.offer(art, wire)

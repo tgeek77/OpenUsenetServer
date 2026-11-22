@@ -1,7 +1,6 @@
 package article
 
 import (
-	"bytes"
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
@@ -18,8 +17,20 @@ type Article struct {
 	Headers    map[string][]string // canonical name (original case of first seen)
 }
 
+// Parse parses a wire-format CRLF Netnews article without altering header order,
+// folding, or bare CR/LF bytes. Header field names are validated per RFC 5322.
 func Parse(raw []byte) (*Article, error) {
-	text := string(normalizeNewlines(raw))
+	return parse(raw, true)
+}
+
+// ParseLenient parses a stored or archived article, tolerating legacy header lines
+// that would fail strict field-name validation.
+func ParseLenient(raw []byte) (*Article, error) {
+	return parse(raw, false)
+}
+
+func parse(raw []byte, strict bool) (*Article, error) {
+	text := string(raw)
 	head, body, ok := strings.Cut(text, "\r\n\r\n")
 	if !ok {
 		// empty body is allowed if trailing CRLF pair present
@@ -35,20 +46,27 @@ func Parse(raw []byte) (*Article, error) {
 		Body:       body,
 		Headers:    map[string][]string{},
 	}
-	if err := a.parseHeaders(head); err != nil {
+	if err := a.parseHeaders(head, strict); err != nil {
 		return nil, err
 	}
 	return a, nil
 }
 
-func normalizeNewlines(b []byte) []byte {
-	b = bytes.ReplaceAll(b, []byte("\r\n"), []byte("\n"))
-	b = bytes.ReplaceAll(b, []byte("\r"), []byte("\n"))
-	b = bytes.ReplaceAll(b, []byte("\n"), []byte("\r\n"))
-	return b
+func validHeaderName(name string) bool {
+	if name == "" {
+		return false
+	}
+	for i := 0; i < len(name); i++ {
+		c := name[i]
+		// RFC 5322 section 3.6.8 ftext: printable US-ASCII 33..126 except ':' (58)
+		if c < 0x21 || c > 0x7e || c == ':' {
+			return false
+		}
+	}
+	return true
 }
 
-func (a *Article) parseHeaders(head string) error {
+func (a *Article) parseHeaders(head string, strict bool) error {
 	var curName string
 	var curVal strings.Builder
 	flush := func() {
@@ -64,7 +82,10 @@ func (a *Article) parseHeaders(head string) error {
 		}
 		if line[0] == ' ' || line[0] == '\t' {
 			if curName == "" {
-				return fmt.Errorf("folded header with no name")
+				if strict {
+					return fmt.Errorf("folded header with no name")
+				}
+				continue
 			}
 			curVal.WriteByte(' ')
 			curVal.WriteString(strings.TrimSpace(line))
@@ -72,14 +93,94 @@ func (a *Article) parseHeaders(head string) error {
 		}
 		flush()
 		name, val, ok := strings.Cut(line, ":")
-		if !ok {
-			return fmt.Errorf("malformed header line")
+		if !ok || !validHeaderName(name) {
+			if strict {
+				return fmt.Errorf("malformed header line")
+			}
+			continue
 		}
 		curName = name
 		curVal.WriteString(strings.TrimPrefix(val, " "))
 	}
 	flush()
 	return nil
+}
+
+// splitHeaderBlocks splits RawHeaders into logical header blocks (each block is
+// a header line plus any following folded continuation lines).
+func splitHeaderBlocks(rawHeaders string) []string {
+	if rawHeaders == "" {
+		return nil
+	}
+	lines := strings.Split(rawHeaders, "\r\n")
+	var blocks []string
+	for _, line := range lines {
+		if line == "" {
+			continue
+		}
+		if (line[0] == ' ' || line[0] == '\t') && len(blocks) > 0 {
+			blocks[len(blocks)-1] += "\r\n" + line
+		} else {
+			blocks = append(blocks, line)
+		}
+	}
+	return blocks
+}
+
+func headerBlockName(block string) string {
+	first, _, _ := strings.Cut(block, "\r\n")
+	name, _, ok := strings.Cut(first, ":")
+	if !ok {
+		return ""
+	}
+	return name
+}
+
+func setRawHeader(rawHeaders, name, value string, prependIfNew bool) string {
+	blocks := splitHeaderBlocks(rawHeaders)
+	replacement := name + ": " + value
+	out := make([]string, 0, len(blocks)+1)
+	replaced := false
+	for _, blk := range blocks {
+		if strings.EqualFold(headerBlockName(blk), name) {
+			if !replaced {
+				out = append(out, replacement)
+				replaced = true
+			}
+			continue
+		}
+		out = append(out, blk)
+	}
+	if !replaced {
+		if prependIfNew {
+			out = append([]string{replacement}, out...)
+		} else {
+			out = append(out, replacement)
+		}
+	}
+	return strings.Join(out, "\r\n")
+}
+
+func deleteRawHeader(rawHeaders, name string) string {
+	blocks := splitHeaderBlocks(rawHeaders)
+	out := make([]string, 0, len(blocks))
+	for _, blk := range blocks {
+		if strings.EqualFold(headerBlockName(blk), name) {
+			continue
+		}
+		out = append(out, blk)
+	}
+	return strings.Join(out, "\r\n")
+}
+
+// WithXref returns rawHeaders with its Xref header replaced or appended.
+// If xref is empty, rawHeaders is returned unchanged.
+func WithXref(rawHeaders, xref string) string {
+	xref = strings.TrimSpace(xref)
+	if xref == "" {
+		return rawHeaders
+	}
+	return setRawHeader(rawHeaders, "Xref", xref, false)
 }
 
 func (a *Article) Get(name string) string {
@@ -98,6 +199,20 @@ func (a *Article) Set(name, value string) {
 		}
 	}
 	a.Headers[name] = []string{value}
+	if a.RawHeaders != "" {
+		a.RawHeaders = setRawHeader(a.RawHeaders, name, value, strings.EqualFold(name, "Path"))
+	}
+}
+
+func (a *Article) Delete(name string) {
+	for k := range a.Headers {
+		if strings.EqualFold(k, name) {
+			delete(a.Headers, k)
+		}
+	}
+	if a.RawHeaders != "" {
+		a.RawHeaders = deleteRawHeader(a.RawHeaders, name)
+	}
 }
 
 func (a *Article) Has(name string) bool {
@@ -121,40 +236,45 @@ func (a *Article) Newsgroups() []string {
 
 func (a *Article) Wire() []byte {
 	var b strings.Builder
-	// Stable-ish order: well-known headers first, then the rest.
-	order := []string{
-		"Path", "From", "Newsgroups", "Subject", "Date", "Message-ID",
-		"Organization", "Injection-Date", "Injection-Info", "References",
-		"Followup-To", "Reply-To", "Sender", "Expires", "Distribution",
-		"Keywords", "Summary", "Approved", "Control", "MIME-Version",
-		"Content-Type", "Content-Transfer-Encoding", "User-Agent", "Xref",
-	}
-	seen := map[string]bool{}
-	write := func(name, val string) {
-		b.WriteString(name)
-		b.WriteString(": ")
-		b.WriteString(val)
-		b.WriteString("\r\n")
-	}
-	for _, name := range order {
-		for k, vs := range a.Headers {
-			if strings.EqualFold(k, name) {
-				seen[k] = true
-				for _, v := range vs {
-					write(k, v)
+	if a.RawHeaders != "" {
+		b.WriteString(a.RawHeaders)
+		b.WriteString("\r\n\r\n")
+	} else {
+		// Fallback for programmatically constructed Article structs without RawHeaders.
+		order := []string{
+			"Path", "From", "Newsgroups", "Subject", "Date", "Message-ID",
+			"Organization", "Injection-Date", "Injection-Info", "References",
+			"Followup-To", "Reply-To", "Sender", "Expires", "Distribution",
+			"Keywords", "Summary", "Approved", "Control", "MIME-Version",
+			"Content-Type", "Content-Transfer-Encoding", "User-Agent", "Xref",
+		}
+		seen := map[string]bool{}
+		write := func(name, val string) {
+			b.WriteString(name)
+			b.WriteString(": ")
+			b.WriteString(val)
+			b.WriteString("\r\n")
+		}
+		for _, name := range order {
+			for k, vs := range a.Headers {
+				if strings.EqualFold(k, name) {
+					seen[k] = true
+					for _, v := range vs {
+						write(k, v)
+					}
 				}
 			}
 		}
-	}
-	for k, vs := range a.Headers {
-		if seen[k] {
-			continue
+		for k, vs := range a.Headers {
+			if seen[k] {
+				continue
+			}
+			for _, v := range vs {
+				write(k, v)
+			}
 		}
-		for _, v := range vs {
-			write(k, v)
-		}
+		b.WriteString("\r\n")
 	}
-	b.WriteString("\r\n")
 	b.WriteString(a.Body)
 	if a.Body != "" && !strings.HasSuffix(a.Body, "\r\n") {
 		b.WriteString("\r\n")
@@ -168,18 +288,19 @@ func (a *Article) Lines() int {
 	if a.Body == "" {
 		return 0
 	}
-	n := strings.Count(a.Body, "\n")
-	if !strings.HasSuffix(a.Body, "\n") {
+	n := strings.Count(a.Body, "\r\n")
+	if !strings.HasSuffix(a.Body, "\r\n") {
 		n++
 	}
 	return n
 }
 
 type InjectOpts struct {
-	Pathhost     string
-	Hostname     string
-	Organization string
-	Now          time.Time
+	Pathhost       string
+	Hostname       string
+	Organization   string
+	PostingAccount string
+	Now            time.Time
 }
 
 // InjectForPost validates and fills RFC 5536 injection headers.
@@ -205,7 +326,6 @@ func InjectForPost(a *Article, opt InjectOpts) error {
 		if !ValidMessageID(msgid) {
 			return fmt.Errorf("bad Message-ID")
 		}
-		a.Set("Message-ID", msgid)
 	} else {
 		a.Set("Message-ID", GenerateMessageID(opt.Hostname))
 	}
@@ -226,7 +346,11 @@ func InjectForPost(a *Article, opt InjectOpts) error {
 		a.Set("Injection-Date", opt.Now.UTC().Format(time.RFC1123Z))
 	}
 	if !a.Has("Injection-Info") {
-		a.Set("Injection-Info", fmt.Sprintf("%s; posting-account=\"openusenet\"", opt.Hostname))
+		if acct := strings.TrimSpace(opt.PostingAccount); acct != "" {
+			a.Set("Injection-Info", fmt.Sprintf("%s; posting-account=%q", opt.Hostname, acct))
+		} else {
+			a.Set("Injection-Info", opt.Hostname)
+		}
 	}
 	stripXref(a)
 	return nil
@@ -255,7 +379,6 @@ func InjectForIHave(a *Article, opt InjectOpts) error {
 	if !ValidMessageID(msgid) {
 		return fmt.Errorf("bad Message-ID")
 	}
-	a.Set("Message-ID", msgid)
 	if strings.TrimSpace(a.Get("Date")) == "" {
 		return fmt.Errorf("missing Date")
 	}
@@ -272,11 +395,7 @@ func InjectForIHave(a *Article, opt InjectOpts) error {
 }
 
 func stripXref(a *Article) {
-	for k := range a.Headers {
-		if strings.EqualFold(k, "Xref") {
-			delete(a.Headers, k)
-		}
-	}
+	a.Delete("Xref")
 }
 
 // PathContains reports whether token appears as a bang-separated Path hop.

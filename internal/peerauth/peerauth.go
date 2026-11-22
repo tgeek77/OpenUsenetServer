@@ -1,6 +1,7 @@
 package peerauth
 
 import (
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"net"
@@ -9,6 +10,13 @@ import (
 	"openusenet/internal/inbound"
 	"openusenet/internal/store"
 )
+
+// GeneratePassword returns a cryptographically random hex peer password.
+func GeneratePassword() string {
+	var b [16]byte
+	_, _ = rand.Read(b[:])
+	return hex.EncodeToString(b[:])
+}
 
 // PairPassword returns a deterministic shared secret for two pathhosts (mesh/testing).
 func PairPassword(a, b string) string {

@@ -40,11 +40,13 @@ func TestPOSTFeedsIHAVE(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	watchdogOff := false
 	cfgB := config.Defaults()
 	cfgB.Server.Hostname = "news-b"
 	cfgB.Server.Pathhost = "news-b"
 	cfgB.Listen.NNTP = "127.0.0.1:0"
 	cfgB.Listen.HTTP = "-"
+	cfgB.Watchdog.Enabled = &watchdogOff
 	srvB := server.New(cfgB, stB, nil, nil)
 	go func() { _ = srvB.ListenAndServe(ctx) }()
 	addrB := waitAddr(t, srvB)
@@ -62,6 +64,7 @@ func TestPOSTFeedsIHAVE(t *testing.T) {
 	cfgA.Server.Pathhost = "news-a"
 	cfgA.Listen.NNTP = "127.0.0.1:0"
 	cfgA.Listen.HTTP = "-"
+	cfgA.Watchdog.Enabled = &watchdogOff
 	cfgA.Peers = []config.Peer{{Host: "127.0.0.1", Port: port}}
 	srvA := server.New(cfgA, stA, nil, nil)
 	go func() { _ = srvA.ListenAndServe(ctx) }()

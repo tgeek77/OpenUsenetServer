@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"openusenet/internal/article"
 	"openusenet/internal/mail"
 	wmat "openusenet/internal/wildmat"
 )
@@ -564,6 +565,9 @@ func (m *Memory) Post(_ context.Context, headers, body, msgid, subject, from, da
 		art.Xref = prefix + " " + strings.Join(xrefParts, " ")
 	} else {
 		art.Xref = strings.Join(xrefParts, " ")
+	}
+	if servedHdr := article.WithXref(headers, art.Xref); len(servedHdr) != len(headers) {
+		art.Bytes += len(servedHdr) - len(headers)
 	}
 	m.arts[msgid] = art
 	m.history[msgid] = time.Now()
