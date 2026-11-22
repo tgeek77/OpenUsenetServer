@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"openusenet/internal/admin"
@@ -29,6 +30,7 @@ type Server struct {
 	cfg     config.Config
 	st      store.Store
 	mbox    *archive.MBox
+	lnMu    sync.Mutex
 	ln      net.Listener
 	httpLn  net.Listener
 	log     *log.Logger
@@ -90,7 +92,12 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("listen %s: %w", addr, err)
 	}
+	s.lnMu.Lock()
 	s.ln = ln
+	s.lnMu.Unlock()
+	if strings.EqualFold(s.cfg.Server.Hostname, "news.localhost") || strings.EqualFold(s.cfg.Server.Pathhost, "news.localhost") {
+		s.log.Printf("WARNING: server hostname/pathhost is still %q/%q; set a real hostname before peering", s.cfg.Server.Hostname, s.cfg.Server.Pathhost)
+	}
 	s.log.Printf("nntp listening on %s (hostname %s)", ln.Addr(), s.cfg.Server.Hostname)
 	go func() {
 		<-ctx.Done()
@@ -358,10 +365,13 @@ func (s *Server) runExpireSchedule(ctx context.Context) {
 }
 
 func (s *Server) Addr() net.Addr {
-	if s.ln == nil {
+	s.lnMu.Lock()
+	ln := s.ln
+	s.lnMu.Unlock()
+	if ln == nil {
 		return nil
 	}
-	return s.ln.Addr()
+	return ln.Addr()
 }
 
 // SeedPeers copies YAML peers into an empty peers table.

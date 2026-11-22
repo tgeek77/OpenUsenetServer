@@ -110,7 +110,7 @@ func (s Settings) Normalize() Settings {
 	s.Host = strings.TrimSpace(s.Host)
 	s.Username = strings.TrimSpace(s.Username)
 	s.From = strings.TrimSpace(s.From)
-	s.Password = s.Password
+	// Password is kept as-is (do not trim leading/trailing spaces).
 	switch strings.ToLower(strings.TrimSpace(s.Security)) {
 	case "", SecurityAuto, "opportunistic":
 		s.Security = SecurityAuto

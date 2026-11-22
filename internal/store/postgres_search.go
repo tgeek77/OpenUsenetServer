@@ -14,7 +14,7 @@ ALTER TABLE articles ADD COLUMN IF NOT EXISTS search_tsv tsvector
   GENERATED ALWAYS AS (
     setweight(to_tsvector('english', coalesce(subject, '')), 'A') ||
     setweight(to_tsvector('english', coalesce(from_hdr, '')), 'B') ||
-    setweight(to_tsvector('english', coalesce(body, '')), 'C')
+    setweight(to_tsvector('english', coalesce(body_text, '')), 'C')
   ) STORED`)
 	if err != nil {
 		return fmt.Errorf("search_tsv column: %w", err)
@@ -67,7 +67,7 @@ func (p *Postgres) SearchArticles(ctx context.Context, query, group string, limi
 	rows, err := p.pool.Query(ctx, `
 		SELECT a.message_id, a.subject, a.from_hdr, a.date_hdr, a.stored_at, a.xref,
 		       ts_rank_cd(a.search_tsv, q) AS rank,
-		       ts_headline('english', left(a.body, 8000), q, 'MaxWords=35, MinWords=15') AS snippet,
+		       ts_headline('english', left(a.body_text, 8000), q, 'MaxWords=35, MinWords=15') AS snippet,
 		       COALESCE((
 		         SELECT g.name FROM overview o
 		         JOIN newsgroups g ON g.id = o.group_id

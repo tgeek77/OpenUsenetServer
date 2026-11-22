@@ -839,14 +839,17 @@ func (p *Portal) peerDetail(peer store.Peer) map[string]any {
 	if remote == "" {
 		remote = peer.Host
 	}
+	derived := peerauth.PairPassword(p.cfg.Server.Pathhost, remote)
+	derivedWarn := derived != "" && (strings.TrimSpace(peer.IncomingPassword) == derived || strings.TrimSpace(peer.OutgoingPassword) == derived)
 	opts := inn.ExportOpts{
 		RemotePathhost: remote,
-		Password:       peerauth.PairPassword(p.cfg.Server.Pathhost, remote),
+		Password:       strings.TrimSpace(peer.OutgoingPassword),
 	}
 	return map[string]any{
-		"peer":     peer,
-		"snippets": inn.Snippets(spec),
-		"our_side": p.ourSideSnippets(opts),
+		"peer":                     peer,
+		"snippets":                 inn.Snippets(spec),
+		"our_side":                 p.ourSideSnippets(opts),
+		"derived_password_warning": derivedWarn,
 	}
 }
 
@@ -1135,6 +1138,7 @@ func (p *Portal) startArchiveJob(selector string) *store.ArchiveJob {
 	}
 	p.jobsMu.Lock()
 	p.jobs[id] = job
+	cp := *job
 	p.jobsMu.Unlock()
 	go func() {
 		res, err := archive.Export(context.Background(), p.st, p.cfg.Archive.ExportDir, selector)
@@ -1153,7 +1157,7 @@ func (p *Portal) startArchiveJob(selector string) *store.ArchiveJob {
 		job.Articles = res.Articles
 		_ = archive.PruneOldExports(p.cfg.Archive.ExportDir, p.cfg.Archive.RetainGens)
 	}()
-	return job
+	return &cp
 }
 
 func (p *Portal) startImportJob(names, paths []string, workDir string, opt archive.ImportOpts) *store.ArchiveJob {
@@ -1167,6 +1171,7 @@ func (p *Portal) startImportJob(names, paths []string, workDir string, opt archi
 	}
 	p.jobsMu.Lock()
 	p.jobs[id] = job
+	cp := *job
 	p.jobsMu.Unlock()
 	go func() {
 		defer func() { _ = os.RemoveAll(workDir) }()
@@ -1209,7 +1214,7 @@ func (p *Portal) startImportJob(names, paths []string, workDir string, opt archi
 		job.Status = "done"
 		job.Dir = ""
 	}()
-	return job
+	return &cp
 }
 
 func pingNNTP(addr string, timeout time.Duration) (bool, string) {

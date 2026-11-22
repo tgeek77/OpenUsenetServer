@@ -95,6 +95,12 @@ docker build -t jsevans/openusenet:0.8.0 -t jsevans/openusenet:latest .
 docker compose up -d
 ```
 
+To build the Go binary directly on Debian (where `golang-go` defaults to `GOTOOLCHAIN=local` with an older Go), enable automatic toolchain download:
+
+```bash
+GOTOOLCHAIN=auto go build ./cmd/openusenet
+```
+
 ## Auth
 
 - Anonymous NNTP **read** is allowed.

@@ -379,7 +379,7 @@ func (p *Postgres) RefreshContentStats(ctx context.Context, excludeSites []strin
 	paths := map[string]map[string]int{}
 	for rows.Next() {
 		var day time.Time
-		var headers string
+		var headers []byte
 		if err := rows.Scan(&day, &headers); err != nil {
 			rows.Close()
 			return err
@@ -388,7 +388,7 @@ func (p *Postgres) RefreshContentStats(ctx context.Context, excludeSites []strin
 		if paths[key] == nil {
 			paths[key] = map[string]int{}
 		}
-		for _, site := range PathStatSites(pathFromHeaders(headers), excludeSites...) {
+		for _, site := range PathStatSites(pathFromHeaders(string(headers)), excludeSites...) {
 			paths[key][site]++
 		}
 	}
