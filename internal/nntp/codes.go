@@ -47,6 +47,8 @@ const (
 	FailPostAuth       = 440
 	FailPostReject     = 441
 	FailAuthNeeded     = 480
+	FailAuthRejected   = 481 // RFC 4643: authentication failed/rejected
+	FailAuthSequence   = 482 // RFC 4643: authentication commands out of sequence
 
 	ErrCommand = 500
 	ErrSyntax  = 501

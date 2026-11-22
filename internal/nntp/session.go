@@ -137,7 +137,7 @@ var commands = map[string]cmd{
 	"IHAVE":        {2, 2, cmdIHave},
 	"CHECK":        {2, 2, cmdCheck},
 	"TAKETHIS":     {2, 2, cmdTakeThis},
-	"AUTHINFO":     {2, 3, cmdAuthinfo},
+	"AUTHINFO":     {2, 4, cmdAuthinfo}, // 4: AUTHINFO SASL mechanism initial-response
 	"NEWNEWS":      {4, 5, cmdNewnews},
 	"NEWGROUPS":    {3, 4, cmdNewgroups},
 	"SLAVE":        {1, 1, cmdSlave},
@@ -157,10 +157,15 @@ func cmdCapabilities(s *Session, _ []string) error {
 		"OVER MSGID",
 		"IHAVE",
 		"STREAMING",
-		"AUTHINFO USER",
-		"LIST ACTIVE NEWSGROUPS ACTIVE.TIMES OVERVIEW.FMT HEADERS",
-		"IMPLEMENTATION " + Software + " " + Version,
 	}
+	// RFC 4643 2.2: AUTHINFO is no longer advertised once authenticated.
+	if !s.authOK && !s.feedAuthOK {
+		lines = append(lines, "AUTHINFO USER")
+	}
+	lines = append(lines,
+		"LIST ACTIVE NEWSGROUPS ACTIVE.TIMES OVERVIEW.FMT HEADERS",
+		"IMPLEMENTATION "+Software+" "+Version,
+	)
 	var body []byte
 	for _, l := range lines {
 		body = append(body, l...)
@@ -608,22 +613,23 @@ func hdrFromStored(header string, a *store.StoredArticle) string {
 
 func cmdAuthinfo(s *Session, args []string) error {
 	sub := strings.ToUpper(args[1])
+	if s.authOK || s.feedAuthOK {
+		// RFC 4643 2.2: no further AUTHINFO once authenticated.
+		return s.conn.Reply(ErrAccess, "already authenticated")
+	}
 	switch sub {
 	case "USER":
 		if len(args) != 3 {
 			return s.conn.Reply(ErrSyntax, "syntax error")
 		}
 		s.pending = args[2]
-		s.authOK = false
-		s.authUser = ""
-		s.authUserID = 0
 		return s.conn.Reply(ContAuthPass, "PASSWORD required")
 	case "PASS":
 		if len(args) != 3 {
 			return s.conn.Reply(ErrSyntax, "syntax error")
 		}
 		if s.pending == "" {
-			return s.conn.Reply(ErrSyntax, "AUTHINFO USER required first")
+			return s.conn.Reply(FailAuthSequence, "AUTHINFO USER required first")
 		}
 		pass := args[2]
 		u, err := s.store.GetUser(context.Background(), s.pending)
@@ -644,7 +650,7 @@ func cmdAuthinfo(s *Session, args []string) error {
 			return s.conn.Reply(OKAuth, "Authentication accepted")
 		}
 		s.pending = ""
-		return s.conn.Reply(FailAuthNeeded, "Authentication failed")
+		return s.conn.Reply(FailAuthRejected, "Authentication failed")
 	default:
 		return s.conn.Reply(ErrCommand, "unsupported AUTHINFO")
 	}
